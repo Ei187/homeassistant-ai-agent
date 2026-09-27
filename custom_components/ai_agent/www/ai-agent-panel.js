@@ -630,6 +630,7 @@ class AIAgentPanel extends HTMLElement {
               </div>
             </div>
             <select class="apple-select" id="agent-role-select">
+              <option value="omni" ${s.agent_role === 'omni' ? 'selected' : ''}>👑 סוכן-על שעושה הכל ללא הגבלה (אוטומציות, תיקונים, לוגים ושליטה)</option>
               <option value="diagnostic" ${s.agent_role === 'diagnostic' ? 'selected' : ''}>🔧 סוכן דיאגנוסטיקה ותיקונים (לוגים ותקלות)</option>
               <option value="automations" ${s.agent_role === 'automations' ? 'selected' : ''}>⚡ סוכן מומחה אוטומציות (בנייה וקוד YAML)</option>
               <option value="butler" ${s.agent_role === 'butler' ? 'selected' : ''}>🏠 סוכן בית חכם כללי (שליטה ומענה שוטף)</option>

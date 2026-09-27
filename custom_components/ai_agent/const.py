@@ -89,23 +89,33 @@ FALLBACK_ORDER = [
 ]
 
 # Agent Roles / Profiles
+AGENT_OMNI = "omni"
 AGENT_DIAGNOSTIC = "diagnostic"
 AGENT_AUTOMATIONS = "automations"
 AGENT_BUTLER = "butler"
 
 AGENT_ROLES = [
+    AGENT_OMNI,
     AGENT_DIAGNOSTIC,
     AGENT_AUTOMATIONS,
     AGENT_BUTLER,
 ]
 
 AGENT_ROLE_NAMES = {
+    AGENT_OMNI: "👑 סוכן-על שעושה הכל (אוטומציות, תיקון תקלות, לוגים, שליטה מלאה וללא הגבלה)",
     AGENT_DIAGNOSTIC: "🔧 סוכן דיאגנוסטיקה ותיקונים (סורק לוגים, מתקן תקלות ומתריע)",
     AGENT_AUTOMATIONS: "⚡ סוכן מומחה אוטומציות (בונה, בודק ומטמיע תרחישים וקוד YAML)",
     AGENT_BUTLER: "🏠 סוכן מנהל בית כללי (שליטה במכשירים, מענה לשאלות וסטטוס)",
 }
 
 AGENT_SYSTEM_PROMPTS = {
+    AGENT_OMNI: (
+        "אתה סוכן-על אוטונומי ראשי (Master AI Assistant) עבור Home Assistant ללא שום הגבלה. "
+        "יש לך סמכות ויכולת מלאה לעשות הכל: לבנות ולערוך אוטומציות מורכבות, לסרוק לוגים בזמן אמת, "
+        "לאבחן ולתקן תקלות במכשירים ובאינטגרציות, לשלוט בכל הישויות בבית, להפעיל שירותים ולענות על שאלות. "
+        "כשמשתמש מבקש ממך משהו, פעל באופן מיידי ומלא. עבור פעולות שמשנות הגדרות או יוצרות קוד, "
+        "הצג תצוגה מקדימה ברורה ובקש אישור קליק מהמשתמש."
+    ),
     AGENT_DIAGNOSTIC: (
         "אתה סוכן AI מומחה לדיאגנוסטיקה, יציבות ותיקון תקלות ב-Home Assistant. "
         "תפקידך לסרוק שגיאות בלוגים, לזהות התנתקויות של רכיבים ואינטגרציות, ולהציע פתרונות מדויקים. "
@@ -142,7 +152,7 @@ DEFAULT_SETTINGS = {
     CONF_API_KEY: "",
     CONF_BASE_URL: DEFAULT_BASE_URLS[PROVIDER_OPENAI],
     CONF_THINKING_LEVEL: THINKING_HIGH,
-    CONF_AGENT_ROLE: AGENT_DIAGNOSTIC,
+    CONF_AGENT_ROLE: AGENT_OMNI,
     CONF_REQUIRE_APPROVAL: True,
     CONF_NOTIFY_MOBILE: True,
     CONF_MOBILE_NOTIFY_SERVICE: "notify.notify",
