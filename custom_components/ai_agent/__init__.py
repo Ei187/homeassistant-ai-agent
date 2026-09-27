@@ -47,6 +47,26 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js")
 
     async_setup_websocket_api(hass)
+
+    # Register dedicated panel in Home Assistant left sidebar
+    try:
+        hass.components.frontend.async_register_built_in_panel(
+            component_name="custom",
+            sidebar_title="AI Agent Pro",
+            sidebar_icon="mdi:robot",
+            frontend_url_path="ai-agent-pro",
+            config={
+                "_panel_custom": {
+                    "name": "ai-agent-panel",
+                    "module_url": "/ai_agent_panel/ai-agent-panel.js",
+                }
+            },
+            require_admin=False,
+        )
+        _LOGGER.info("Registered AI Agent Pro sidebar panel at /ai-agent-pro")
+    except Exception as err:
+        _LOGGER.debug("Could not auto-register sidebar panel: %s", err)
+
     return True
 
 
