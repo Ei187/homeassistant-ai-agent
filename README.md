@@ -1,4 +1,4 @@
-# 🤖 AI Agent Pro for Home Assistant (Apple Edition)
+# 🤖 AI Agent Pro for Home Assistant
 
 סוכן AI אוטונומי ומאובטח ל-Home Assistant בעיצוב יוקרתי בסגנון **Apple**, התומך בכל ספקי ה-AI בעולם, מודלים עתידיים ומנגנון אישורים קפדני (Human-in-the-Loop).
 
@@ -42,7 +42,7 @@
 ### שלב 3: הוספת האינטגרציה
 1. עבור אל **Settings (הגדרות) -> Devices & Services (מכשירים ושירותים)**.
 2. לחץ על **+ Add Integration**.
-3. חפש **AI Agent Pro (Apple Edition)**.
+3. חפש **AI Agent Pro**.
 4. בחר את הספק, הזן את מפתח ה-API ואת רמת החשיבה הרצויה.
 
 ### שלב 4: הוספת הכרטיס למסך הבית (Lovelace Dashboard)

@@ -1,5 +1,5 @@
 /**
- * AI Agent Pro - Apple Edition Dashboard Panel & Card
+ * AI Agent Pro Dashboard Panel & Card
  * Pure Vanilla Web Component with Apple-style Glassmorphism, Quick "+" Settings Drawer & Free Mode
  */
 
@@ -911,6 +911,6 @@ customElements.define('ai-agent-card', AIAgentPanel);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'ai-agent-card',
-  name: 'AI Agent Pro (Apple Edition)',
-  description: 'סוכן AI אוטונומי מעוצב בסגנון אפל עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
+  name: 'AI Agent Pro',
+  description: 'סוכן AI אוטונומי עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
 });
