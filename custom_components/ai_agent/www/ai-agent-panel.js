@@ -1,6 +1,6 @@
 /**
  * AI Agent Pro Dashboard Panel & Card
- * Pure Vanilla Web Component with Apple-style Glassmorphism, Quick "+" Settings Drawer & Free Mode
+ * Pure Vanilla Web Component with Modern Glassmorphism, Quick "+" Settings Drawer & Free Mode
  */
 
 class AIAgentPanel extends HTMLElement {
@@ -140,7 +140,7 @@ class AIAgentPanel extends HTMLElement {
 
   showToast(msg) {
     const toast = document.createElement('div');
-    toast.className = 'apple-toast';
+    toast.className = 'pro-toast';
     toast.textContent = msg;
     this.shadowRoot.appendChild(toast);
     setTimeout(() => toast.classList.add('visible'), 10);
@@ -173,7 +173,7 @@ class AIAgentPanel extends HTMLElement {
           min-height: 820px;
           background: #000000;
           color: #f5f5f7;
-          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          font-family: -pro-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           direction: rtl;
           box-sizing: border-box;
           padding: 20px;
@@ -191,8 +191,8 @@ class AIAgentPanel extends HTMLElement {
           position: relative;
         }
 
-        /* Apple Header */
-        .apple-header {
+        /* Header */
+        .pro-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
@@ -203,7 +203,7 @@ class AIAgentPanel extends HTMLElement {
           align-items: center;
           gap: 12px;
         }
-        .apple-logo-badge {
+        .pro-logo-badge {
           width: 44px;
           height: 44px;
           border-radius: 14px;
@@ -349,7 +349,7 @@ class AIAgentPanel extends HTMLElement {
           gap: 10px;
           margin-top: 12px;
         }
-        .apple-pill-btn {
+        .pro-pill-btn {
           flex: 1;
           padding: 10px 16px;
           border-radius: 980px;
@@ -396,7 +396,7 @@ class AIAgentPanel extends HTMLElement {
           margin-bottom: 8px;
         }
 
-        /* Chat Input Bar with Apple "+" Button */
+        /* Chat Input Bar with "+" Button */
         .chat-input-bar {
           padding: 14px 18px;
           background: rgba(0, 0, 0, 0.5);
@@ -407,8 +407,8 @@ class AIAgentPanel extends HTMLElement {
           position: relative;
         }
 
-        /* The Apple Plus (+) Button */
-        .apple-plus-btn {
+        /* The Plus (+) Button */
+        .pro-plus-btn {
           width: 44px;
           height: 44px;
           border-radius: 50%;
@@ -427,11 +427,11 @@ class AIAgentPanel extends HTMLElement {
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
           flex-shrink: 0;
         }
-        .apple-plus-btn:hover {
+        .pro-plus-btn:hover {
           background: rgba(255, 255, 255, 0.2);
           transform: scale(1.06);
         }
-        .apple-plus-btn.active {
+        .pro-plus-btn.active {
           transform: rotate(45deg);
           background: #ff453a;
           border-color: #ff453a;
@@ -526,7 +526,7 @@ class AIAgentPanel extends HTMLElement {
           gap: 14px;
         }
 
-        .apple-card {
+        .pro-card {
           background: rgba(36, 36, 38, 0.7);
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 18px;
@@ -559,7 +559,7 @@ class AIAgentPanel extends HTMLElement {
           color: #86868b;
         }
 
-        .apple-select, .apple-input {
+        .pro-select, .pro-input {
           width: 100%;
           background: rgba(0, 0, 0, 0.45);
           border: 1px solid rgba(255, 255, 255, 0.12);
@@ -569,7 +569,7 @@ class AIAgentPanel extends HTMLElement {
           font-size: 13.5px;
           outline: none;
         }
-        .apple-select:focus, .apple-input:focus {
+        .pro-select:focus, .pro-input:focus {
           border-color: #0a84ff;
           box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
         }
@@ -601,7 +601,7 @@ class AIAgentPanel extends HTMLElement {
         }
 
         /* Toast */
-        .apple-toast {
+        .pro-toast {
           position: fixed;
           bottom: 24px;
           left: 50%;
@@ -620,7 +620,7 @@ class AIAgentPanel extends HTMLElement {
           transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
           z-index: 9999;
         }
-        .apple-toast.visible {
+        .pro-toast.visible {
           opacity: 1;
           transform: translateX(-50%) translateY(0);
         }
@@ -632,13 +632,13 @@ class AIAgentPanel extends HTMLElement {
       </style>
 
       <div class="app-container">
-        <!-- Apple Header -->
-        <div class="apple-header">
+        <!-- Header -->
+        <div class="pro-header">
           <div class="header-title">
-            <div class="apple-logo-badge">🤖</div>
+            <div class="pro-logo-badge">🤖</div>
             <div class="title-text">
               <h1>סוכן AI חכם ל-Home Assistant</h1>
-              <p>שליטה מלאה, אוטומציות ותיקון תקלות בסגנון Apple</p>
+              <p>שליטה מלאה, אוטומציות ותיקון תקלות</p>
             </div>
           </div>
           <!-- Clickable Status Pill that opens the + drawer -->
@@ -689,10 +689,10 @@ class AIAgentPanel extends HTMLElement {
                     </div>
                     <div class="yaml-block">${p.yaml_preview}</div>
                     <div class="proposal-buttons">
-                      <button class="apple-pill-btn btn-approve" data-approve="${p.id}">
+                      <button class="pro-pill-btn btn-approve" data-approve="${p.id}">
                         ✅ אשר והטמע במערכת
                       </button>
-                      <button class="apple-pill-btn btn-reject" data-reject="${p.id}">
+                      <button class="pro-pill-btn btn-reject" data-reject="${p.id}">
                         ❌ דחה ובטל
                       </button>
                     </div>
@@ -722,7 +722,7 @@ class AIAgentPanel extends HTMLElement {
             <!-- The Separate Rectangles -->
             <div class="cards-grid">
               <!-- מלבן 1: תפקיד סוכן -->
-              <div class="apple-card">
+              <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">👑</div>
                   <div>
@@ -730,7 +730,7 @@ class AIAgentPanel extends HTMLElement {
                     <div class="card-subtitle">עושה הכל או מתמחה</div>
                   </div>
                 </div>
-                <select class="apple-select" id="agent-role-select">
+                <select class="pro-select" id="agent-role-select">
                   <option value="omni" ${s.agent_role === 'omni' ? 'selected' : ''}>👑 סוכן-על שעושה הכל ללא הגבלה</option>
                   <option value="diagnostic" ${s.agent_role === 'diagnostic' ? 'selected' : ''}>🔧 סוכן דיאגנוסטיקה ותיקונים</option>
                   <option value="automations" ${s.agent_role === 'automations' ? 'selected' : ''}>⚡ סוכן מומחה אוטומציות</option>
@@ -739,7 +739,7 @@ class AIAgentPanel extends HTMLElement {
               </div>
 
               <!-- מלבן 2: בחירת ספק -->
-              <div class="apple-card">
+              <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">🌐</div>
                   <div>
@@ -747,7 +747,7 @@ class AIAgentPanel extends HTMLElement {
                     <div class="card-subtitle">חברת ה-AI שמפעילה את המודל</div>
                   </div>
                 </div>
-                <select class="apple-select" id="provider-select">
+                <select class="pro-select" id="provider-select">
                   <option value="openai" ${s.provider === 'openai' ? 'selected' : ''}>OpenAI (ChatGPT / GPT-4o / o1 / GPT-6)</option>
                   <option value="gemini" ${s.provider === 'gemini' ? 'selected' : ''}>Google Gemini (Flash / Pro)</option>
                   <option value="anthropic" ${s.provider === 'anthropic' ? 'selected' : ''}>Anthropic Claude (Sonnet / Opus)</option>
@@ -758,7 +758,7 @@ class AIAgentPanel extends HTMLElement {
               </div>
 
               <!-- מלבן 3: בחירת מודל והדבקה חופשית -->
-              <div class="apple-card">
+              <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">🧠</div>
                   <div>
@@ -766,14 +766,14 @@ class AIAgentPanel extends HTMLElement {
                     <div class="card-subtitle">הקלד או הדבק כל שם מודל</div>
                   </div>
                 </div>
-                <input type="text" class="apple-input" id="model-input" value="${s.model}" placeholder="למשל: gpt-6-astra, o1, deepseek-r1..." />
+                <input type="text" class="pro-input" id="model-input" value="${s.model}" placeholder="למשל: gpt-6-astra, o1, deepseek-r1..." />
                 <div style="font-size: 11px; color: #86868b; margin-top: 4px;">
                   💡 חופשי לחלוטין: הדבק כל מודל עתידי בלי לחכות לעדכון
                 </div>
               </div>
 
               <!-- מלבן 4: רמת חשיבה עם Fallback -->
-              <div class="apple-card">
+              <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">⚡</div>
                   <div>
@@ -791,7 +791,7 @@ class AIAgentPanel extends HTMLElement {
               </div>
 
               <!-- מלבן 5: API Key (אופציונלי למצב חינמי) -->
-              <div class="apple-card">
+              <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">🔑</div>
                   <div>
@@ -799,22 +799,22 @@ class AIAgentPanel extends HTMLElement {
                     <div class="card-subtitle">השאר ריק למצב חינמי בסיסי</div>
                   </div>
                 </div>
-                <input type="password" class="apple-input" id="api-key-input" placeholder="הדבק מפתח API (אופציונלי)..." value="${s.api_key || ''}" />
+                <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API (אופציונלי)..." value="${s.api_key || ''}" />
                 <div style="font-size: 11px; color: #86868b; margin-top: 4px;">
                   ללא מפתח המערכת תפעל במצב חינמי עד המגבלה.
                 </div>
               </div>
             </div>
 
-            <button class="apple-pill-btn btn-approve" id="save-drawer-btn" style="margin-top: 8px; padding: 12px;">
+            <button class="pro-pill-btn btn-approve" id="save-drawer-btn" style="margin-top: 8px; padding: 12px;">
               💾 שמור את כל השינויים וסגור
             </button>
           </div>
 
-          <!-- Chat Input Bar with the Apple "+" Button -->
+          <!-- Chat Input Bar with the "+" Button -->
           <div class="chat-input-bar">
-            <!-- The Apple "+" Button -->
-            <button class="apple-plus-btn ${this.isDrawerOpen ? 'active' : ''}" id="plus-btn" title="פתח הגדרות ספק, מודל וחשיבה">
+            <!-- The "+" Button -->
+            <button class="pro-plus-btn ${this.isDrawerOpen ? 'active' : ''}" id="plus-btn" title="פתח הגדרות ספק, מודל וחשיבה">
               +
             </button>
 
@@ -914,3 +914,4 @@ window.customCards.push({
   name: 'AI Agent Pro',
   description: 'סוכן AI אוטונומי עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
 });
+

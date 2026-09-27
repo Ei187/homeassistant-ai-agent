@@ -1,0 +1,11 @@
+{
+  "title": "AI Agent Pro",
+  "config": {
+    "step": {
+      "user": {
+        "title": "AI Agent Pro",
+        "description": "Fast single-click setup"
+      }
+    }
+  }
+}

@@ -44,7 +44,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 cache_headers=False,
             )
         ])
-        _LOGGER.info("Registered Apple-style AI Agent frontend at /ai_agent_panel/ai-agent-panel.js")
+        _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js")
 
     async_setup_websocket_api(hass)
     return True
