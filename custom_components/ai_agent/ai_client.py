@@ -170,7 +170,12 @@ class AIClient:
                     continue
                 raise
 
-        raise RuntimeError(f"All thinking level fallbacks failed: {last_error}")
+        _LOGGER.error("All thinking level fallbacks failed: %s", last_error)
+        return {
+            "content": f"⚠️ לא ניתן היה לקבל מענה מהמודל `{self.model}`: {last_error}",
+            "tool_calls": [],
+            "raw": {},
+        }
 
     async def _execute_chat(
         self,
@@ -214,8 +219,9 @@ class AIClient:
 
         # Reasoning effort for OpenAI/OpenRouter
         if thinking_level != THINKING_OFF:
-            # Map low, medium, high, xhigh, max
             payload["reasoning_effort"] = thinking_level
+        else:
+            payload["reasoning_effort"] = "none"
 
         if tools:
             payload["tools"] = tools
@@ -224,6 +230,23 @@ class AIClient:
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:
                 err_text = await resp.text()
+
+                # If model requires reasoning_effort: 'none' when function tools are used
+                if "reasoning_effort" in err_text and ("'none'" in err_text or "not supported" in err_text):
+                    _LOGGER.info("OpenAI API requires reasoning_effort='none' with function tools. Retrying with 'none'.")
+                    payload["reasoning_effort"] = "none"
+                    async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
+                        if retry_resp.status < 400:
+                            data = await retry_resp.json()
+                            choice = data["choices"][0]["message"]
+                            return {
+                                "content": choice.get("content") or "",
+                                "tool_calls": choice.get("tool_calls") or [],
+                                "raw": data,
+                                "fallback_notice": f"ℹ️ המודל `{self.model}` מחייב כיבוי reasoning ('none') בעת שימוש בכלים ב-API זה. בוצעה התאמה אוטומטית.",
+                            }
+                        err_text = await retry_resp.text()
+
                 raise aiohttp.ClientResponseError(
                     resp.request_info,
                     resp.history,
