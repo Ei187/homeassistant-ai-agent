@@ -28,26 +28,36 @@
 
 ---
 
-## 🚀 הוראות התקנה ב-Home Assistant
+## 🚀 הוראות התקנה קלה דרך HACS
 
-### שלב 1: העתקת התיקייה ל-Home Assistant
-העתק את תיקיית `custom_components/ai_agent` ישירות לתוך תיקיית הקונפיגורציה של ה-Home Assistant שלך:
-```text
-/config/custom_components/ai_agent/
-```
+### שלב 1: הוספת המאגר ל-HACS
+1. ב-Home Assistant עבור אל **HACS**.
+2. לחץ על **3 הנקודות** בפינה העליונה ➔ בחר ב-**Custom repositories** (מאגרים מותאמים אישית).
+3. בשדה **Repository** הדבק את כתובת המאגר:
+   ```text
+   https://github.com/Ei187/homeassistant-ai-agent
+   ```
+4. בשדה **Type (סוג)** בחר: **Integration**.
+5. לחץ על **Add** (הוסף).
+6. כעת תראה את **AI Agent Pro** ברשימה – לחץ עליו ולחץ על **Download** (הורד).
 
 ### שלב 2: הפעלה מחדש (Restart)
-היכנס להגדרות Home Assistant ובצע הפעלה מחדש לשרת (Developer Tools -> Restart).
+היכנס להגדרות Home Assistant ובצע הפעלה מחדש למערכת (**Developer Tools ➔ Restart**).
 
-### שלב 3: הוספת האינטגרציה
-1. עבור אל **Settings (הגדרות) -> Devices & Services (מכשירים ושירותים)**.
+### שלב 3: הפעלת האינטגרציה (קליק אחד!)
+1. עבור אל **Settings (הגדרות) ➔ Devices & Services (מכשירים ושירותים)**.
 2. לחץ על **+ Add Integration**.
-3. חפש **AI Agent Pro**.
-4. בחר את הספק, הזן את מפתח ה-API ואת רמת החשיבה הרצויה.
+3. חפש **AI Agent Pro** ולחץ **Submit** (התקנה מיידית ללא שאלות או טפסים מסובכים).
 
-### שלב 4: הוספת הכרטיס למסך הבית (Lovelace Dashboard)
-הוסף כרטיס ידני (Manual Card) עם ההגדרה הבאה:
+### שלב 4: הוספת הממשק למסך הבית (Lovelace Dashboard)
+הוסף כרטיס ידני (Manual Card) ללוח הבקרה שלך עם ההגדרה הבאה:
 ```yaml
 type: custom:ai-agent-card
 ```
-או כפאנל מלא במסך נפרד.
+
+---
+
+## 💡 שימוש והגדרות
+* **כפתור ה-`+` בצ'אט:** בתוך חלון השיחה מופיע כפתור `+` אלגנטי. לחיצה עליו פותחת מגירה להחלפת ספק (OpenAI, Gemini, Claude, DeepSeek), הדבקת כל מודל שתרצה (כמו `gpt-6-astra`), שינוי רמת החשיבה (Low עד Max), והזנת מפתח API.
+* **מצב חינמי:** ניתן להתחיל לדבר עם הסוכן מיד גם ללא מפתח API! מפתח נדרש רק לשימוש במודלי-על מסחריים.
+
