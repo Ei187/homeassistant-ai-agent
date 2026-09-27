@@ -1,0 +1,12 @@
+{
+  "domain": "ai_agent",
+  "name": "AI Agent Pro (Apple Edition)",
+  "codeowners": ["@user"],
+  "config_flow": true,
+  "documentation": "https://github.com/user/homeassistant-ai-agent",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/user/homeassistant-ai-agent/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
