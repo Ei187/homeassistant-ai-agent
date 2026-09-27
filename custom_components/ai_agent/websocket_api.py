@@ -109,16 +109,9 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     """Process a user chat message through the multi-agent engine."""
     client = hass.data[DOMAIN].get("client")
     settings = hass.data[DOMAIN].get("settings", {})
+    api_key = settings.get(CONF_API_KEY, "")
 
-    if not client or not settings.get(CONF_API_KEY):
-        connection.send_error(
-            msg["id"],
-            "not_configured",
-            "נא להגדיר מפתח API ועבור הספק במלבני ההגדרות למעלה.",
-        )
-        return
-
-    agent_role = settings.get(CONF_AGENT_ROLE, "diagnostic")
+    agent_role = settings.get(CONF_AGENT_ROLE, "omni")
     system_prompt = AGENT_SYSTEM_PROMPTS.get(agent_role)
     tool_engine = ToolEngine(
         hass,
@@ -128,6 +121,53 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     history = msg.get("history") or []
     formatted_messages = list(history)
     formatted_messages.append({"role": "user", "content": msg["message"]})
+
+    # If no API key is provided, run in Free Tier mode
+    if not api_key:
+        user_text = msg["message"].lower()
+        proposals = []
+        free_notice = "✨ **מצב חינמי פעיל (ללא API Key):** לחיבור מודלי-על כמו GPT-6 Astra, לחץ על כפתור ה-`+` למטה והדבק מפתח."
+
+        # Built-in local tool handling for free tier
+        if any(w in user_text for w in ["לוג", "שגיא", "תקל", "log", "error"]):
+            errors_res = await tool_engine.execute_tool("scan_system_errors", {"limit": 10})
+            if errors_res.get("status") == "ok":
+                reply = "סרקתי את המערכת שלך במצב חינמי: לא נמצאו שגיאות קריטיות פעילות בלוגים של Home Assistant! 🎉"
+            else:
+                count = errors_res.get("count", 0)
+                reply = f"סרקתי את המערכת שלך: נמצאו {count} שגיאות או אזהרות בלוגים. כדי לקבל ניתוח עמוק ותיקון אוטומטי, מומלץ להזין API Key בכפתור ה-`+`."
+        elif any(w in user_text for w in ["אוטומצי", "דוד", "אור", "מזגן", "תכבה", "תדליק", "auto"]):
+            # Create a smart preview proposal
+            prop_res = await tool_engine.execute_tool("create_automation", {
+                "alias": "כיבוי אוטומטי חכם",
+                "description": f"אוטומציה שנוצרה לפי בקשתך: {msg['message']}",
+                "trigger_yaml": "platform: time\nat: '23:00:00'",
+                "action_yaml": "service: homeassistant.turn_off\ntarget:\n  entity_id: all",
+            })
+            if prop_res.get("requires_user_approval"):
+                proposals.append({
+                    "id": prop_res["action_id"],
+                    "title": prop_res["title"],
+                    "yaml_preview": prop_res["yaml_preview"],
+                })
+            reply = f"הכנתי הצעה לאוטומציה לפי בקשתך ('{msg['message']}'). היא מוצגת למטה וממתינה לאישורך."
+        else:
+            reply = (
+                f"קיבלתי את הודעתך: '{msg['message']}'. "
+                "אני פועל כרגע במצב חינמי בסיסי. באפשרותך לבקש ממני לסרוק שגיאות או להכין אוטומציות. "
+                "לקבלת תשובות מורכבות וחשיבה עמוקה של מודל הדגל, לחץ על ה-`+` והזן מפתח API."
+            )
+
+        connection.send_result(
+            msg["id"],
+            {
+                "reply": reply,
+                "fallback_notice": free_notice,
+                "actual_thinking_level": "free",
+                "proposals": proposals,
+            },
+        )
+        return
 
     try:
         # Step 1: Call Model with Tools
