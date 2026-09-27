@@ -50,7 +50,7 @@ class AIAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         """Create the options flow so user can configure directly from integration page."""
-        return AIAgentOptionsFlowHandler(config_entry)
+        return AIAgentOptionsFlowHandler()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Single-click instant setup step without complex questions."""
@@ -75,15 +75,12 @@ class AIAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class AIAgentOptionsFlowHandler(config_entries.OptionsFlow):
     """Direct configuration inside Settings -> Devices & Services -> AI Agent Pro -> Configure."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage options directly from the integration page."""
         errors: dict[str, str] = {}
         settings = dict(self.config_entry.data)
-        settings.update(self.config_entry.options)
+        if self.config_entry.options:
+            settings.update(self.config_entry.options)
 
         if user_input is not None:
             prov = user_input.get(CONF_PROVIDER)
