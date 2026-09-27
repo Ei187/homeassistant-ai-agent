@@ -8,6 +8,7 @@ from typing import Any, Literal
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import AGENT_SYSTEM_PROMPTS, CONF_AGENT_ROLE, CONF_API_KEY, CONF_REQUIRE_APPROVAL, DOMAIN
@@ -89,7 +90,7 @@ class AIAgentConversationEntity(conversation.ConversationEntity):
                     "לחיבור מודלי-על כמו GPT-6 Astra, פתח את כרטיס AI Agent Pro בלוח הבקרה ולחץ על כפתור ה-`+`."
                 )
 
-            intent_response = conversation.create_intent_response(user_input)
+            intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_speech(reply)
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
@@ -119,14 +120,14 @@ class AIAgentConversationEntity(conversation.ConversationEntity):
                 final_turn = await client.chat(messages=formatted_messages, system_prompt=system_prompt)
                 content = final_turn.get("content") or content
 
-            intent_response = conversation.create_intent_response(user_input)
+            intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_speech(content)
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
             )
         except Exception as err:
             _LOGGER.exception("Error in conversation entity: %s", err)
-            intent_response = conversation.create_intent_response(user_input)
+            intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_speech(f"אירעה שגיאה: {err}")
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
