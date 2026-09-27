@@ -79,6 +79,22 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "control_device",
+            "description": "שולט במכשיר או ישות בבית (הדלקת/כיבוי אורות, מזגנים, מתגים, מנעולים, מדיה). מתבצע מידית.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_id": {"type": "string", "description": "מזהה הישות (למשל 'light.moms_room', 'climate.ac')"},
+                    "action": {"type": "string", "description": "הפעולה: turn_on, turn_off, toggle, set_temperature וכו'"},
+                    "parameters": {"type": "object", "description": "פרמטרים נוספים אופציונליים"},
+                },
+                "required": ["entity_id", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_service_call",
             "description": "מציע להפעיל פעולה או שירות במערכת (למשל הפעלה מחדש של אינטגרציה, כיבוי מתג רגיש).",
             "parameters": {
@@ -107,6 +123,8 @@ class ToolEngine:
     async def execute_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch tool call safely."""
         try:
+            if name == "control_device":
+                return await self._handle_control_device(args)
             if name == "scan_system_errors":
                 return await self._scan_system_errors(args.get("limit", 10))
             if name == "search_entities":
@@ -121,6 +139,17 @@ class ToolEngine:
         except Exception as err:
             _LOGGER.exception("Tool execution error in %s: %s", name, err)
             return {"error": str(err)}
+
+    async def _handle_control_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Directly control an entity in Home Assistant."""
+        entity_id = args.get("entity_id", "")
+        action = args.get("action", "turn_on")
+        params = dict(args.get("parameters") or {})
+        params["entity_id"] = entity_id
+        domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
+
+        await self.hass.services.async_call(domain, action, params, blocking=True)
+        return {"status": "success", "message": f"הפעולה '{action}' בוצעה בהצלחה על הישות '{entity_id}'."}
 
     async def _scan_system_errors(self, limit: int) -> Dict[str, Any]:
         """Scan real or recent system logs for errors."""
