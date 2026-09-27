@@ -1,12 +1,12 @@
 {
   "domain": "ai_agent",
   "name": "AI Agent Pro",
-  "codeowners": ["@user"],
+  "codeowners": ["@Ei187"],
   "config_flow": true,
-  "documentation": "https://github.com/user/homeassistant-ai-agent",
+  "documentation": "https://github.com/Ei187/homeassistant-ai-agent",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/user/homeassistant-ai-agent/issues",
+  "issue_tracker": "https://github.com/Ei187/homeassistant-ai-agent/issues",
   "requirements": [],
-  "version": "1.1.1"
+  "version": "1.2.0"
 }

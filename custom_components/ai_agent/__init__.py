@@ -10,6 +10,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components import frontend
 
 from .ai_client import AIClient
 from .const import (
@@ -22,6 +23,7 @@ from .const import (
     DOMAIN,
     STORAGE_KEY,
     STORAGE_VERSION,
+    VERSION,
 )
 from .websocket_api import async_setup_websocket_api
 
@@ -30,7 +32,7 @@ PLATFORMS: list[Platform] = [Platform.CONVERSATION]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up the integration via YAML (registers static paths & websocket)."""
+    """Set up the integration via YAML (registers static paths, sidebar panel & websocket)."""
     hass.data.setdefault(DOMAIN, {})
 
     # Register static path for custom card and panel
@@ -48,9 +50,10 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
     async_setup_websocket_api(hass)
 
-    # Register dedicated panel in Home Assistant left sidebar
+    # Register dedicated panel in Home Assistant left sidebar and load card globally
     try:
-        hass.components.frontend.async_register_built_in_panel(
+        frontend.async_register_built_in_panel(
+            hass,
             component_name="custom",
             sidebar_title="AI Agent Pro",
             sidebar_icon="mdi:robot",
@@ -58,30 +61,31 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             config={
                 "_panel_custom": {
                     "name": "ai-agent-panel",
-                    "module_url": "/ai_agent_panel/ai-agent-panel.js",
+                    "module_url": f"/ai_agent_panel/ai-agent-panel.js?v={VERSION}",
                 }
             },
             require_admin=False,
         )
-        _LOGGER.info("Registered AI Agent Pro sidebar panel at /ai-agent-pro")
+        frontend.add_extra_js_url(hass, f"/ai_agent_panel/ai-agent-panel.js?v={VERSION}")
+        _LOGGER.info("Registered AI Agent Pro sidebar panel and extra JS url")
     except Exception as err:
-        _LOGGER.debug("Could not auto-register sidebar panel: %s", err)
+        _LOGGER.warning("Could not register sidebar panel or extra JS url: %s", err)
 
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up from a config entry."""
+    """Set up from a config entry with robust multi-source synchronization."""
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     stored_data = await store.async_load()
 
     settings = dict(DEFAULT_SETTINGS)
+    if entry.data:
+        settings.update({k: v for k, v in entry.data.items() if v is not None and v != ""})
     if stored_data:
-        settings.update(stored_data)
-    # Merge entry data and options if present
-    settings.update(entry.data)
+        settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
     if entry.options:
-        settings.update(entry.options)
+        settings.update({k: v for k, v in entry.options.items() if v is not None and v != ""})
 
     async def _create_client() -> AIClient:
         return AIClient(
@@ -96,7 +100,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _refresh_client() -> None:
         nonlocal client
-        await client.close()
+        if client:
+            await client.close()
         client = await _create_client()
         hass.data[DOMAIN]["client"] = client
 

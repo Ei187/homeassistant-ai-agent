@@ -217,10 +217,12 @@ class AIClient:
             "messages": formatted_messages,
         }
 
-        # Reasoning effort for OpenAI/OpenRouter
+        # Reasoning effort for OpenAI / OpenRouter
+        is_reasoning_model = any(k in self.model.lower() for k in ["o1", "o3", "astra", "luna", "gpt-6"])
         if thinking_level != THINKING_OFF:
             payload["reasoning_effort"] = thinking_level
-        else:
+        elif is_reasoning_model and tools:
+            # Reasoning models in /v1/chat/completions require reasoning_effort: 'none' when function tools are used
             payload["reasoning_effort"] = "none"
 
         if tools:
@@ -231,9 +233,24 @@ class AIClient:
             if resp.status >= 400:
                 err_text = await resp.text()
 
-                # If model requires reasoning_effort: 'none' when function tools are used
-                if "reasoning_effort" in err_text and ("'none'" in err_text or "not supported" in err_text):
-                    _LOGGER.info("OpenAI API requires reasoning_effort='none' with function tools. Retrying with 'none'.")
+                # Case 1: Model rejects reasoning_effort parameter completely (e.g., gpt-4o, claude, deepseek)
+                if "reasoning_effort" in err_text and ("unsupported parameter" in err_text.lower() or "not recognized" in err_text.lower() or "extra forbidden" in err_text.lower()):
+                    _LOGGER.info("Model '%s' does not accept reasoning_effort parameter. Retrying without it.", self.model)
+                    payload.pop("reasoning_effort", None)
+                    async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
+                        if retry_resp.status < 400:
+                            data = await retry_resp.json()
+                            choice = data["choices"][0]["message"]
+                            return {
+                                "content": choice.get("content") or "",
+                                "tool_calls": choice.get("tool_calls") or [],
+                                "raw": data,
+                            }
+                        err_text = await retry_resp.text()
+
+                # Case 2: Model requires reasoning_effort: 'none' when function tools are used (e.g. gpt-6-luna / o1)
+                elif "reasoning_effort" in err_text and ("'none'" in err_text or "pass reasoning_effort" in err_text):
+                    _LOGGER.info("Model '%s' requires reasoning_effort='none' with function tools. Retrying with 'none'.", self.model)
                     payload["reasoning_effort"] = "none"
                     async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
                         if retry_resp.status < 400:
@@ -244,6 +261,21 @@ class AIClient:
                                 "tool_calls": choice.get("tool_calls") or [],
                                 "raw": data,
                                 "fallback_notice": f"ℹ️ המודל `{self.model}` מחייב כיבוי reasoning ('none') בעת שימוש בכלים ב-API זה. בוצעה התאמה אוטומטית.",
+                            }
+                        err_text = await retry_resp.text()
+
+                # Case 3: Other reasoning errors - retry without reasoning_effort
+                elif "reasoning_effort" in err_text:
+                    _LOGGER.info("Reasoning error for model '%s'. Retrying without reasoning_effort.", self.model)
+                    payload.pop("reasoning_effort", None)
+                    async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
+                        if retry_resp.status < 400:
+                            data = await retry_resp.json()
+                            choice = data["choices"][0]["message"]
+                            return {
+                                "content": choice.get("content") or "",
+                                "tool_calls": choice.get("tool_calls") or [],
+                                "raw": data,
                             }
                         err_text = await retry_resp.text()
 

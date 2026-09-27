@@ -141,15 +141,75 @@ class ToolEngine:
             return {"error": str(err)}
 
     async def _handle_control_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Directly control an entity in Home Assistant."""
-        entity_id = args.get("entity_id", "")
+        """Directly control an entity in Home Assistant with smart matching and multi-entity support."""
+        raw_entity_id = args.get("entity_id", "")
         action = args.get("action", "turn_on")
         params = dict(args.get("parameters") or {})
-        params["entity_id"] = entity_id
-        domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
 
-        await self.hass.services.async_call(domain, action, params, blocking=True)
-        return {"status": "success", "message": f"הפעולה '{action}' בוצעה בהצלחה על הישות '{entity_id}'."}
+        # Handle list or comma-separated entity IDs
+        entity_ids = []
+        if isinstance(raw_entity_id, list):
+            entity_ids = raw_entity_id
+        elif isinstance(raw_entity_id, str):
+            entity_ids = [e.strip() for e in raw_entity_id.split(",") if e.strip()]
+
+        if not entity_ids:
+            return {"error": "לא צוין מזהה ישות (entity_id) לביצוע הפעולה."}
+
+        # Handle special target: "all" or "all_lights"
+        if len(entity_ids) == 1 and entity_ids[0].lower() in ("all", "all_lights", "כל האורות", "אורות"):
+            target_lights = [
+                s.entity_id for s in self.hass.states.async_all("light")
+                if (s.state == "on" if action == "turn_off" else s.state == "off")
+            ]
+            if not target_lights:
+                target_lights = [s.entity_id for s in self.hass.states.async_all("light")]
+            if target_lights:
+                await self.hass.services.async_call("light", action, {"entity_id": target_lights}, blocking=True)
+                return {
+                    "status": "success",
+                    "message": f"הפעולה '{action}' בוצעה על כל האורות בבית ({len(target_lights)} נורות).",
+                    "entities": target_lights,
+                }
+
+        results = []
+        for eid in entity_ids:
+            state = self.hass.states.get(eid)
+            # Fuzzy match if not found directly
+            if not state:
+                clean_target = eid.replace("light.", "").replace("switch.", "").replace("climate.", "").replace("_", " ").lower()
+                for s in self.hass.states.async_all():
+                    s_name = (s.name or "").lower()
+                    s_id = s.entity_id.lower()
+                    if clean_target in s_name or clean_target in s_id:
+                        eid = s.entity_id
+                        state = s
+                        break
+
+            domain = eid.split(".")[0] if "." in eid else "homeassistant"
+            call_params = dict(params)
+            call_params["entity_id"] = eid
+
+            try:
+                # Try domain-specific service first
+                if self.hass.services.has_service(domain, action):
+                    await self.hass.services.async_call(domain, action, call_params, blocking=True)
+                else:
+                    # Fallback to homeassistant service (turn_on / turn_off / toggle)
+                    await self.hass.services.async_call("homeassistant", action, call_params, blocking=True)
+
+                friendly = state.name if state else eid
+                results.append(f"{friendly} ({eid})")
+            except Exception as err:
+                _LOGGER.warning("Could not execute %s on %s: %s", action, eid, err)
+
+        if results:
+            return {
+                "status": "success",
+                "message": f"הפעולה '{action}' בוצעה בהצלחה על: {', '.join(results)}.",
+                "controlled": results,
+            }
+        return {"error": f"לא ניתן היה לשלוט בישות '{raw_entity_id}'."}
 
     async def _scan_system_errors(self, limit: int) -> Dict[str, Any]:
         """Scan real or recent system logs for errors."""
@@ -347,3 +407,49 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
     except Exception as err:
         _LOGGER.exception("Failed to execute approved action %s: %s", action_id, err)
         return {"success": False, "error": f"שגיאה בהפעלת השינוי: {err}"}
+
+
+def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
+    """Format home entities and current states into a clear list for the AI."""
+    lines = []
+    relevant_domains = {
+        "light", "switch", "climate", "cover", "fan", "lock",
+        "media_player", "vacuum", "scene", "script", "automation", "sensor", "binary_sensor"
+    }
+    count = 0
+    for state in hass.states.async_all():
+        domain = state.domain
+        if domain not in relevant_domains:
+            continue
+        # Skip internal or noisy sensors unless helpful
+        if domain in ("sensor", "binary_sensor"):
+            s_id = state.entity_id.lower()
+            s_name = (state.name or "").lower()
+            if not any(k in s_id or k in s_name for k in [
+                "temp", "humidity", "battery", "motion", "door", "window",
+                "power", "energy", "boiler", "דוד", "טמפ", "תנועה", "דלת", "חלון"
+            ]):
+                continue
+
+        friendly_name = state.attributes.get("friendly_name", state.entity_id)
+        current_state = state.state
+
+        extra = []
+        if "current_temperature" in state.attributes:
+            extra.append(f"temp: {state.attributes['current_temperature']}°C")
+        if "temperature" in state.attributes:
+            extra.append(f"target: {state.attributes['temperature']}°C")
+        if "brightness" in state.attributes and state.attributes["brightness"]:
+            pct = round((state.attributes["brightness"] / 255) * 100)
+            extra.append(f"brightness: {pct}%")
+
+        extra_str = f" ({', '.join(extra)})" if extra else ""
+        lines.append(f"- {state.entity_id} | '{friendly_name}' | state: {current_state}{extra_str}")
+        count += 1
+        if count >= max_entities:
+            break
+
+    if not lines:
+        return "אין ישויות זמינות כרגע."
+    return "\n".join(lines)
+

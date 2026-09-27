@@ -82,10 +82,22 @@ class AIAgentOptionsFlowHandler(config_entries.OptionsFlow):
         if self.config_entry.options:
             settings.update(self.config_entry.options)
 
+        domain_settings = self.hass.data.get(DOMAIN, {}).get("settings", {})
+        for k, v in domain_settings.items():
+            if v and not settings.get(k):
+                settings[k] = v
+
         if user_input is not None:
             prov = user_input.get(CONF_PROVIDER)
             if not user_input.get(CONF_BASE_URL) and prov in DEFAULT_BASE_URLS:
                 user_input[CONF_BASE_URL] = DEFAULT_BASE_URLS[prov]
+
+            # Keep storage and memory in lockstep
+            domain_data = self.hass.data.get(DOMAIN, {})
+            if "storage" in domain_data:
+                await domain_data["storage"].async_save(user_input)
+            if "settings" in domain_data:
+                domain_data["settings"].update(user_input)
 
             # Save in integration data/options
             return self.async_create_entry(title="", data=user_input)
