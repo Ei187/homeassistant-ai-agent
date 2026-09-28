@@ -32,7 +32,7 @@ from .const import (
 from .websocket_api import async_setup_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS: list[Platform] = [Platform.CONVERSATION]
+PLATFORMS: list[Platform] = [Platform.CONVERSATION, Platform.UPDATE]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
