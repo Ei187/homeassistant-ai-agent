@@ -17,11 +17,44 @@ class AIAgentPanel extends HTMLElement {
       api_key: '',
       base_url: 'https://api.openai.com/v1',
     };
-    this.chatHistory = [];
+    this.chatHistory = this.loadChatHistory();
     this.pendingProposals = [];
     this.isLoading = false;
     this.activeFallbackNotice = null;
     this.isDrawerOpen = false;
+  }
+
+  loadChatHistory() {
+    try {
+      const saved = localStorage.getItem('ai_agent_pro_chat_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Could not load chat history from localStorage', e);
+    }
+    return [];
+  }
+
+  saveChatHistory() {
+    try {
+      const toSave = this.chatHistory.slice(-40);
+      localStorage.setItem('ai_agent_pro_chat_history', JSON.stringify(toSave));
+    } catch (e) {
+      console.warn('Could not save chat history to localStorage', e);
+    }
+  }
+
+  startNewChat() {
+    this.chatHistory = [];
+    this.pendingProposals = [];
+    this.activeFallbackNotice = null;
+    try {
+      localStorage.removeItem('ai_agent_pro_chat_history');
+    } catch (e) {}
+    this.showToast('✨ נפתחה שיחה חדשה!');
+    this.render();
   }
 
   set hass(val) {
@@ -95,6 +128,7 @@ class AIAgentPanel extends HTMLElement {
             ? '✅ **האוטומציה אושרה והוטמעה במערכת בהצלחה!** היא פעילה כעת ב-Home Assistant.'
             : '❌ **הפעולה בוטלה.** לא בוצעו שינויים במערכת.',
         });
+        this.saveChatHistory();
         this.render();
         this.scrollToBottom();
       } else {
@@ -110,6 +144,7 @@ class AIAgentPanel extends HTMLElement {
 
     this.isLoading = true;
     this.chatHistory.push({ role: 'user', content: text });
+    this.saveChatHistory();
     this.render();
     this.scrollToBottom();
 
@@ -117,7 +152,7 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS({
         type: 'ai_agent/chat',
         message: text,
-        history: this.chatHistory.slice(-6),
+        history: this.chatHistory.slice(-8),
       });
 
       this.activeFallbackNotice = res.fallback_notice || null;
@@ -132,12 +167,14 @@ class AIAgentPanel extends HTMLElement {
         fallbackNotice: res.fallback_notice,
         proposals: res.proposals || [],
       });
+      this.saveChatHistory();
     } catch (e) {
       this.chatHistory.push({
         role: 'assistant',
         content: `⚠️ שגיאה בתקשורת עם הסוכן: ${e.message || e}`,
         isError: true,
       });
+      this.saveChatHistory();
     } finally {
       this.isLoading = false;
       this.render();
@@ -165,7 +202,9 @@ class AIAgentPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this.chatHistory = this.loadChatHistory();
     this.render();
+    this.scrollToBottom();
   }
 
   render() {
@@ -233,6 +272,41 @@ class AIAgentPanel extends HTMLElement {
           font-size: 13px;
           color: #86868b;
           margin: 2px 0 0 0;
+        }
+
+        /* Header Actions */
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        /* New Chat Button */
+        .new-chat-btn {
+          background: rgba(10, 132, 255, 0.16);
+          color: #2997ff;
+          border: 1px solid rgba(10, 132, 255, 0.35);
+          padding: 8px 16px;
+          border-radius: 980px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          outline: none;
+        }
+        .new-chat-btn:hover {
+          background: #0a84ff;
+          color: #ffffff;
+          border-color: #0a84ff;
+          transform: scale(1.03);
+          box-shadow: 0 4px 16px rgba(10, 132, 255, 0.45);
+        }
+        .new-chat-btn:active {
+          transform: scale(0.97);
         }
 
         /* Active Config Pill Badge */
@@ -648,12 +722,18 @@ class AIAgentPanel extends HTMLElement {
               <p>שליטה מלאה, אוטומציות ותיקון תקלות</p>
             </div>
           </div>
-          <!-- Clickable Status Pill that opens the + drawer -->
-          <div class="status-pill-badge" id="status-pill-btn" title="לחץ לשינוי ספק, מודל וחשיבה">
-            <div class="dot-indicator"></div>
-            <span>${isFreeMode ? 'מצב חינמי פעיל' : `${s.provider} • ${s.model}`}</span>
-            <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${s.thinking_level.toUpperCase()})</span>
-            <span style="margin-right: 4px;">⚙️</span>
+          <div class="header-actions">
+            <!-- New Chat Button -->
+            <button class="new-chat-btn" id="new-chat-btn" title="התחל שיחה חדשה ונקה את היסטוריית השיחה הנוכחית">
+              שיחה חדשה +
+            </button>
+            <!-- Clickable Status Pill that opens the + drawer -->
+            <div class="status-pill-badge" id="status-pill-btn" title="לחץ לשינוי ספק, מודל וחשיבה">
+              <div class="dot-indicator"></div>
+              <span>${isFreeMode ? 'מצב חינמי פעיל' : `${s.provider} • ${s.model}`}</span>
+              <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${s.thinking_level.toUpperCase()})</span>
+              <span style="margin-right: 4px;">⚙️</span>
+            </div>
           </div>
         </div>
 
@@ -894,6 +974,12 @@ class AIAgentPanel extends HTMLElement {
       };
     }
 
+    // Start New Chat Button
+    const newChatBtn = root.querySelector('#new-chat-btn');
+    if (newChatBtn) {
+      newChatBtn.onclick = () => this.startNewChat();
+    }
+
     // Approve / Reject buttons inside chat
     root.querySelectorAll('[data-approve]').forEach((btn) => {
       btn.onclick = () => {
@@ -911,14 +997,20 @@ class AIAgentPanel extends HTMLElement {
   }
 }
 
-customElements.define('ai-agent-panel', AIAgentPanel);
-customElements.define('ai-agent-card', AIAgentPanel);
+if (!customElements.get('ai-agent-panel')) {
+  customElements.define('ai-agent-panel', AIAgentPanel);
+}
+if (!customElements.get('ai-agent-card')) {
+  customElements.define('ai-agent-card', AIAgentPanel);
+}
 
-// Register in Lovelace card picker
+// Register in Lovelace card picker (only once)
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: 'ai-agent-card',
-  name: 'AI Agent Pro',
-  description: 'סוכן AI אוטונומי עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
-});
+if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
+  window.customCards.push({
+    type: 'ai-agent-card',
+    name: 'AI Agent Pro',
+    description: 'סוכן AI אוטונומי עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
+  });
+}
 
