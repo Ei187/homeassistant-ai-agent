@@ -82,6 +82,7 @@ class AIAgentUpdateEntity(UpdateEntity):
         def _download_and_extract() -> None:
             # Try multiple download URLs to avoid rate limits or 404s
             urls_to_try = [
+                f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/ai_agent.zip",
                 f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag}.zip",
                 f"https://codeload.github.com/{GITHUB_REPO}/zip/refs/tags/{tag}",
                 f"https://api.github.com/repos/{GITHUB_REPO}/zipball/{tag}",
