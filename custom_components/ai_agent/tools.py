@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -272,13 +273,39 @@ class ToolEngine:
         condition_yaml = args.get("condition_yaml", "")
         action_yaml = args.get("action_yaml", "")
 
-        # Assemble clean YAML for preview
+        def _safe_parse(val: Any) -> Any:
+            if isinstance(val, (dict, list)):
+                return val
+            if isinstance(val, str) and val.strip():
+                try:
+                    parsed = yaml.safe_load(val)
+                    if parsed is not None:
+                        return parsed
+                except Exception:
+                    pass
+            return []
+
+        triggers = _safe_parse(trigger_yaml)
+        if isinstance(triggers, dict):
+            triggers = [triggers]
+
+        conditions = _safe_parse(condition_yaml)
+        if isinstance(conditions, dict):
+            conditions = [conditions]
+
+        actions = _safe_parse(action_yaml)
+        if isinstance(actions, dict):
+            actions = [actions]
+
+        auto_id = str(int(time.time() * 1000))
         full_yaml_dict = {
+            "id": auto_id,
             "alias": alias,
             "description": desc,
-            "trigger": yaml.safe_load(trigger_yaml) if trigger_yaml else [],
-            "condition": yaml.safe_load(condition_yaml) if condition_yaml else [],
-            "action": yaml.safe_load(action_yaml) if action_yaml else [],
+            "trigger": triggers,
+            "condition": conditions,
+            "action": actions,
+            "mode": "single",
         }
         full_yaml_str = yaml.dump(full_yaml_dict, allow_unicode=True, sort_keys=False)
 
@@ -354,6 +381,39 @@ class ToolEngine:
         }
 
 
+def _save_automation_to_file(config_path: str, automation_dict: Dict[str, Any]) -> None:
+    """Save an automation to automations.yaml safely."""
+    auto_id = str(automation_dict.get("id") or int(time.time() * 1000))
+    automation_dict["id"] = auto_id
+    if "mode" not in automation_dict:
+        automation_dict["mode"] = "single"
+
+    existing_automations = []
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f)
+                if isinstance(content, list):
+                    existing_automations = content
+                elif isinstance(content, dict):
+                    existing_automations = [content]
+        except Exception as err:
+            _LOGGER.warning("Could not read existing automations from %s: %s", config_path, err)
+
+    # Check if an automation with the same id exists; update or append
+    updated = False
+    for i, a in enumerate(existing_automations):
+        if isinstance(a, dict) and str(a.get("id")) == auto_id:
+            existing_automations[i] = automation_dict
+            updated = True
+            break
+    if not updated:
+        existing_automations.append(automation_dict)
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(existing_automations, f, allow_unicode=True, sort_keys=False)
+
+
 async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bool) -> Dict[str, Any]:
     """Execute or reject a pending proposal after user confirmation."""
     proposal = PENDING_ACTIONS.get(action_id)
@@ -373,14 +433,13 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
 
     try:
         if action_type == "create_automation":
-            # Call automation creation service
-            await hass.services.async_call(
-                "automation",
-                "create",
-                payload,
-                blocking=True,
+            automations_path = hass.config.path("automations.yaml")
+            await hass.async_add_executor_job(
+                _save_automation_to_file,
+                automations_path,
+                dict(payload),
             )
-            # Reload automations
+            # Reload automations in Home Assistant
             await hass.services.async_call("automation", "reload", {}, blocking=True)
             proposal["status"] = "executed"
             del PENDING_ACTIONS[action_id]

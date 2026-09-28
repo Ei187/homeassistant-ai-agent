@@ -89,7 +89,14 @@ class AIAgentPanel extends HTMLElement {
       if (res && res.success) {
         this.showToast(approved ? '✅ הפעולה אושרה ובוצעה בהצלחה!' : '❌ הפעולה נדחתה');
         this.pendingProposals = this.pendingProposals.filter((p) => p.id !== actionId);
+        this.chatHistory.push({
+          role: 'assistant',
+          content: approved
+            ? '✅ **האוטומציה אושרה והוטמעה במערכת בהצלחה!** היא פעילה כעת ב-Home Assistant.'
+            : '❌ **הפעולה בוטלה.** לא בוצעו שינויים במערכת.',
+        });
         this.render();
+        this.scrollToBottom();
       } else {
         this.showToast('⚠️ שגיאה: ' + (res.error || 'נכשלה הפעולה'));
       }
