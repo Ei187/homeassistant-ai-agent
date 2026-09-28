@@ -15,11 +15,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create ai_agent.zip for HACS and Direct Updates
+      - name: Create ai_agent.zip for Direct Updates
         run: |
-          cd custom_components
-          zip -r ../ai_agent.zip ai_agent
-          cd ..
+          zip -r ai_agent.zip custom_components/ai_agent
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
