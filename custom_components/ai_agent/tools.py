@@ -920,11 +920,27 @@ def _safe_edit_file(config_dir: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _safe_install_component(config_dir: str, github_repo: str, component_name: str) -> Dict[str, Any]:
     repo_clean = github_repo.strip().replace("https://github.com/", "").strip("/")
-    url = f"https://api.github.com/repos/{repo_clean}/zipball"
-    req = urllib.request.Request(url, headers={"User-Agent": "HomeAssistant-AIAgentPro"})
+    urls_to_try = [
+        f"https://github.com/{repo_clean}/archive/refs/heads/main.zip",
+        f"https://github.com/{repo_clean}/archive/refs/heads/master.zip",
+        f"https://codeload.github.com/{repo_clean}/zip/refs/heads/main",
+        f"https://api.github.com/repos/{repo_clean}/zipball",
+    ]
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        zip_data = resp.read()
+    zip_data = None
+    last_err = None
+    for u in urls_to_try:
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "HomeAssistant-AIAgentPro"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status == 200:
+                    zip_data = resp.read()
+                    break
+        except Exception as ex:
+            last_err = ex
+
+    if not zip_data:
+        raise RuntimeError(f"שגיאה בהורדת {repo_clean} מ-GitHub: {last_err}")
 
     zf = zipfile.ZipFile(io.BytesIO(zip_data))
     target_comp_dir = os.path.join(config_dir, "custom_components", component_name)
