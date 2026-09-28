@@ -1,12 +1,14 @@
-"""Home Assistant Tool Engine with Human-in-the-Loop Approval & Autonomous Super-Powers."""
+"""Home Assistant Tool Engine with Strict Human-in-the-Loop Approval & Autonomous GitHub Super-Powers."""
 
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import shutil
 import time
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -26,15 +28,62 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "control_device",
-            "description": "שולט במכשיר או ישות בבית (הדלקת/כיבוי אורות, מזגנים, מתגים, מנעולים, מדיה). מתבצע מידית.",
+            "description": "שולט במכשיר או ישות בבית (הדלקת/כיבוי אורות, מזגנים, מתגים, מנעולים, מדיה). מכין פקודה מפורטת ומבקש תמיד את אישור המשתמש לפני הביצוע.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "entity_id": {"type": "string", "description": "מזהה הישות (למשל 'light.moms_room', 'climate.ac', 'all_lights')"},
+                    "entity_id": {"type": "string", "description": "מזהה הישות (למשל 'light.living_room', 'climate.ac', 'all_lights')"},
                     "action": {"type": "string", "description": "הפעולה: turn_on, turn_off, toggle, set_temperature וכו'"},
                     "parameters": {"type": "object", "description": "פרמטרים נוספים אופציונליים"},
                 },
                 "required": ["entity_id", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_github_integrations",
+            "description": "מחפש אינטגרציות ורכיבים מותאמים אישית עבור Home Assistant ישירות ב-GitHub. מחזיר את המאגרים המובילים, מספר כוכבים, תיאור וקישור.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "מונח החיפוש באנגלית או בעברית (למשל 'smartir', 'dyson', 'broadlink', 'switchbot', 'tuya local')",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "מספר התוצאות להחזרה (ברירת מחדל: 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "install_custom_component",
+            "description": "מתקין אינטגרציה מותאמת אישית ישירות מ-GitHub אל תיקיית custom_components (למשל: 'smartHomeHub/SmartIR'). מכין כרטיס אישור ומוריד את הקבצים אוטומטית רק לאחר אישור המשתמש.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "github_repo": {
+                        "type": "string",
+                        "description": "שם המאגר ב-GitHub (למשל: 'smartHomeHub/SmartIR' או כתובת מלאה)",
+                    },
+                    "component_name": {
+                        "type": "string",
+                        "description": "שם התיקייה/האינטגרציה באותיות קטנות (למשל: 'smartir')",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "הסבר מפורט למשתמש מדוע מומלץ להתקין את האינטגרציה ומה היא תעשה",
+                    },
+                },
+                "required": ["github_repo", "component_name", "reason"],
             },
         },
     },
@@ -114,40 +163,15 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "install_custom_component",
-            "description": "מתקין אינטגרציה מותאמת אישית ישירות מ-GitHub אל תיקיית custom_components (למשל: 'smartHomeHub/SmartIR'). מכין כרטיס אישור ומוריד את הקבצים אוטומטית.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "github_repo": {
-                        "type": "string",
-                        "description": "שם המאגר ב-GitHub (למשל: 'smartHomeHub/SmartIR' או כתובת מלאה)",
-                    },
-                    "component_name": {
-                        "type": "string",
-                        "description": "שם התיקייה/האינטגרציה באותיות קטנות (למשל: 'smartir')",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "הסבר למשתמש מדוע מומלץ להתקין את האינטגרציה",
-                    },
-                },
-                "required": ["github_repo", "component_name", "reason"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "restart_or_reload",
-            "description": "מבצע בדיקת תקינות קונפיגורציה, טעינה מחדש של הגדרות ללא הפעלה מחדש (Reload), או הפעלה מחדש של שרת Home Assistant (Restart).",
+            "description": "מבצע בדיקת תקינות קונפיגורציה, טעינה מחדש של הגדרות ללא הפעלה מחדש (Reload), או הפעלה מחדש של שרת Home Assistant (Restart עם אישור משתמש).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "enum": ["check_config", "reload_all", "reload_core", "restart_ha"],
-                        "description": "'check_config' לבדיקת תקינות YAML, 'reload_all'/'reload_core' לטעינה מהירה של הגדרות, 'restart_ha' להפעלה מחדש של השרת",
+                        "description": "'check_config' לבדיקת תקינות YAML, 'reload_all'/'reload_core' לטעינה מהירה של הגדרות, 'restart_ha' להפעלה מחדש של השרת (דורש אישור)",
                     },
                     "reason": {
                         "type": "string",
@@ -255,7 +279,7 @@ TOOLS_SCHEMA = [
 
 
 class ToolEngine:
-    """Execution engine with Human-in-the-Loop protection and autonomous system control."""
+    """Execution engine with Strict Human-in-the-Loop protection and autonomous system control."""
 
     def __init__(self, hass: HomeAssistant, require_approval: bool = True, notify_mobile: bool = True) -> None:
         self.hass = hass
@@ -267,14 +291,16 @@ class ToolEngine:
         try:
             if name == "control_device":
                 return await self._handle_control_device(args)
+            if name == "search_github_integrations":
+                return await self._handle_search_github_integrations(args)
+            if name == "install_custom_component":
+                return await self._handle_install_custom_component(args)
             if name == "edit_config_file":
                 return await self._handle_edit_config_file(args)
             if name == "read_config_file":
                 return await self._handle_read_config_file(args)
             if name == "list_config_files":
                 return await self._handle_list_config_files(args)
-            if name == "install_custom_component":
-                return await self._handle_install_custom_component(args)
             if name == "restart_or_reload":
                 return await self._handle_restart_or_reload(args)
             if name == "reconnect_or_reload_integration":
@@ -295,12 +321,11 @@ class ToolEngine:
             return {"error": str(err)}
 
     async def _handle_control_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Directly control an entity in Home Assistant with smart matching and multi-entity support."""
+        """Control device, strictly requesting user approval when require_approval is True."""
         raw_entity_id = args.get("entity_id", "")
         action = args.get("action", "turn_on")
         params = dict(args.get("parameters") or {})
 
-        # Handle list or comma-separated entity IDs
         entity_ids = []
         if isinstance(raw_entity_id, list):
             entity_ids = raw_entity_id
@@ -310,7 +335,71 @@ class ToolEngine:
         if not entity_ids:
             return {"error": "לא צוין מזהה ישות (entity_id) לביצוע הפעולה."}
 
-        # Handle special target: "all" or "all_lights"
+        # Resolve names for display
+        resolved_names = []
+        for eid in entity_ids:
+            state = self.hass.states.get(eid)
+            resolved_names.append(state.name if state and state.name else eid)
+
+        if self.require_approval:
+            action_id = f"act_{uuid.uuid4().hex[:8]}"
+            preview = (
+                f"# פקודת שליטה במכשיר\n"
+                f"ישות / ישויות: {', '.join(entity_ids)}\n"
+                f"שם: {', '.join(resolved_names)}\n"
+                f"פעולה: {action}\n"
+                f"פרמטרים: {yaml.dump(params, allow_unicode=True) if params else 'ללא'}"
+            )
+            proposal = {
+                "id": action_id,
+                "type": "control_device",
+                "title": f"שליטה במכשיר: {action} על {', '.join(resolved_names[:2])}",
+                "description": f"ביצוע פעולת {action} על {len(entity_ids)} מכשיר/ים",
+                "yaml_preview": preview,
+                "created_at": time.time(),
+                "status": "pending_approval",
+                "payload": {
+                    "entity_id": raw_entity_id,
+                    "action": action,
+                    "parameters": params,
+                },
+            }
+            PENDING_ACTIONS[action_id] = proposal
+
+            persistent_notification.async_create(
+                self.hass,
+                f"**סוכן AI מציע לשלוט במכשיר:** `{action}` על `{', '.join(entity_ids)}`\n\n"
+                f"פתח את חלון הסוכן כדי לאשר או לדחות את הפעולה.",
+                title=f"🤖 ממתין לאישורך: {action} על {', '.join(resolved_names[:2])}",
+                notification_id=f"ai_agent_{action_id}",
+            )
+
+            return {
+                "requires_user_approval": True,
+                "action_id": action_id,
+                "title": proposal["title"],
+                "yaml_preview": preview,
+                "instruction": f"הפעולה '{action}' על {', '.join(resolved_names[:2])} מוכנה וממתינה לאישור המשתמש. הצג מה בכוונתך לעשות ובקש את אישורו.",
+            }
+
+        return await self._execute_control_device(args)
+
+    async def _execute_control_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the actual device control service call."""
+        raw_entity_id = args.get("entity_id", "")
+        action = args.get("action", "turn_on")
+        params = dict(args.get("parameters") or {})
+
+        entity_ids = []
+        if isinstance(raw_entity_id, list):
+            entity_ids = raw_entity_id
+        elif isinstance(raw_entity_id, str):
+            entity_ids = [e.strip() for e in raw_entity_id.split(",") if e.strip()]
+
+        if not entity_ids:
+            return {"error": "לא צוין מזהה ישות (entity_id) לביצוע הפעולה."}
+
+        # Handle all lights
         if len(entity_ids) == 1 and entity_ids[0].lower() in ("all", "all_lights", "כל האורות", "אורות"):
             target_lights = [
                 s.entity_id for s in self.hass.states.async_all("light")
@@ -329,7 +418,6 @@ class ToolEngine:
         results = []
         for eid in entity_ids:
             state = self.hass.states.get(eid)
-            # Fuzzy match if not found directly
             if not state:
                 clean_target = eid.replace("light.", "").replace("switch.", "").replace("climate.", "").replace("_", " ").lower()
                 for s in self.hass.states.async_all():
@@ -362,6 +450,14 @@ class ToolEngine:
                 "controlled": results,
             }
         return {"error": f"לא ניתן היה לשלוט בישות '{raw_entity_id}'."}
+
+    async def _handle_search_github_integrations(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Search GitHub for custom integrations."""
+        query = args.get("query", "")
+        limit = args.get("limit", 5)
+        return await self.hass.async_add_executor_job(
+            _safe_search_github, query, limit
+        )
 
     async def _handle_read_config_file(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Read configuration file content safely."""
@@ -436,9 +532,10 @@ class ToolEngine:
             return {"status": "ok", "message": f"האינטגרציה '{comp_name}' הותקנה בהצלחה!"}
 
         action_id = f"act_{uuid.uuid4().hex[:8]}"
+        repo_clean = github_repo.replace('https://github.com/', '').strip('/')
         preview = (
             f"# התקנת אינטגרציה מ-GitHub\n"
-            f"מאגר מקור: https://github.com/{github_repo.replace('https://github.com/', '').strip('/')}\n"
+            f"מאגר מקור: https://github.com/{repo_clean}\n"
             f"תיקיית יעד: /config/custom_components/{comp_name}\n"
             f"סיבה: {reason}"
         )
@@ -534,7 +631,6 @@ class ToolEngine:
                 "message": f"האינטגרציה '{domain}' נטענה מחדש בהצלחה ({reloaded} רשומות חוברו מחדש).",
             }
 
-        # If it's a YAML based component (like smartir)
         await self.hass.services.async_call("homeassistant", "reload_all", {}, blocking=True)
         return {
             "status": "ok",
@@ -708,7 +804,39 @@ class ToolEngine:
         }
 
 
-# --- Safe File Operations Handlers (Run inside Executor Job) ---
+# --- Safe File & Network Operations (Run inside Executor) ---
+
+def _safe_search_github(query: str, limit: int = 5) -> Dict[str, Any]:
+    """Search GitHub for Home Assistant custom integrations."""
+    try:
+        clean_q = query.strip()
+        encoded = urllib.parse.quote(f"{clean_q} home-assistant")
+        url = f"https://api.github.com/search/repositories?q={encoded}&sort=stars&order=desc&per_page={limit}"
+        req = urllib.request.Request(url, headers={"User-Agent": "HomeAssistant-AIAgentPro"})
+
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+
+        items = data.get("items", [])
+        results = []
+        for item in items[:limit]:
+            results.append({
+                "repo_name": item.get("full_name"),
+                "description": item.get("description") or "ללא תיאור",
+                "stars": item.get("stargazers_count", 0),
+                "url": item.get("html_url"),
+            })
+
+        return {
+            "status": "ok",
+            "query": query,
+            "count": len(results),
+            "repositories": results,
+        }
+    except Exception as err:
+        _LOGGER.warning("GitHub search failed: %s", err)
+        return {"error": f"שגיאה בחיפוש ב-GitHub: {err}"}
+
 
 def _safe_read_file(config_dir: str, file_path: str, max_lines: int = 250) -> Dict[str, Any]:
     file_rel = file_path.lstrip("/\\")
@@ -904,6 +1032,18 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
     payload = proposal.get("payload", {})
 
     try:
+        if action_type == "control_device":
+            engine = ToolEngine(hass, require_approval=False)
+            res = await engine._execute_control_device(payload)
+            proposal["status"] = "executed"
+            del PENDING_ACTIONS[action_id]
+            msg = res.get("message", "הפעולה בוצעה בהצלחה!")
+            return {
+                "success": True,
+                "status": "executed",
+                "message": msg,
+            }
+
         if action_type == "create_automation":
             automations_path = hass.config.path("automations.yaml")
             await hass.async_add_executor_job(
@@ -926,7 +1066,6 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
                 hass.config.config_dir,
                 dict(payload),
             )
-            # Reload core config if configuration.yaml was modified
             if payload.get("file_path", "").endswith("configuration.yaml"):
                 try:
                     await hass.services.async_call("homeassistant", "reload_core_config", {}, blocking=True)

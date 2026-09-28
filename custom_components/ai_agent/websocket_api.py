@@ -160,8 +160,65 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         proposals = []
         free_notice = "✨ **מצב מקומי חינמי:** פועל ללא צורך במפתח API. לחיבור מודלי שפה עמוקים (GPT-6, Claude 3.7, Gemini 2.5), לחץ על ה-`+` והדבק מפתח."
 
-        # 1. Error scan
-        if any(w in user_text for w in ["לוג", "שגיא", "תקל", "log", "error"]):
+        is_question = (
+            "?" in user_raw
+            or any(q in user_text for q in [
+                "האם", "איך", "מה אתה", "אתה יכול", "תוכל", "אפשר", "יכולים",
+                "לעשות הכל", "כלים לעשות", "מה היכולות", "מה אתה יודע"
+            ])
+        )
+
+        # 1. Capability / General Questions
+        if is_question and any(w in user_text for w in ["מה אתה", "יכול לעשות", "מה היכולות", "לעשות הכל", "כלים לעשות", "יודע לעשות"]):
+            reply = (
+                "כן! אני סוכן-על אוטונומי ל-Home Assistant ויש לי את הכלים המלאים לנהל, להגדיר ולתפעל את המערכת:\n\n"
+                "1. 🔍 **חיפוש ב-GitHub:** איתור כל אינטגרציה או רכיב קהילתי (`search_github_integrations`).\n"
+                "2. 📦 **התקנת אינטגרציות:** הורדה והתקנה אוטומטית ישירות לתוך `custom_components/` ממאגרי GitHub.\n"
+                "3. 📝 **עריכת וקריאת קבצים:** קריאה ועריכה של `configuration.yaml`, יצירת קובצי JSON למיזוג (SmartIR), סקריפטים ועוד.\n"
+                "4. 💡 **שליטה במכשירים:** הדלקה וכיבוי אורות, מזגנים, תריסים, מתגים ותרחישים.\n"
+                "5. ⚡ **בניית אוטומציות:** יצירת אוטומציות חכמות והטמעה ישירה במערכת.\n"
+                "6. 🔧 **דיאגנוסטיקה והפעלה מחדש:** סריקת לוגים, בדיקת תקינות הגדרות (check_config), טעינה מחדש והפעלה מחדש של השרת.\n\n"
+                "🛡️ **בטיחות מלאה:** כל פעולה שמשנה הגדרות או שולטת במכשיר מציגה כרטיס אישור `[אשר והטמע במערכת] / [דחה ובטל]`, כך ששום פעולה לא מתבצעת ללא אישורך המפורש!"
+            )
+
+        elif is_question and any(w in user_text for w in ["אינטגרצי", "smartir", "github", "גיטהאב"]):
+            reply = (
+                "כן, יש לי יכולת מלאה לחפש ולהתקין כל אינטגרציה מ-GitHub ישירות אל תיקיית `custom_components/` של Home Assistant.\n\n"
+                "כדי שאבצע זאת, תוכל לבקש ממני למשל:\n"
+                "- `חפש אינטגרציה של broadlink בגיטהאב`\n"
+                "- `התקן את smartHomeHub/SmartIR`\n"
+                "- `התקן אינטגרציית dyson`\n\n"
+                "ברגע שתבקש התקנה, אכין כרטיס התקנה מסודר עם תצוגה מקדימה, ולאחר שתלחץ על 'אשר והטמע במערכת', הקבצים יותקנו אוטומטית."
+            )
+
+        elif is_question and any(w in user_text for w in ["קבצים", "קובץ", "configuration", "yaml"]):
+            reply = (
+                "כן! יש לי גישה ישירה לקרוא ולערוך קובצי תצורה ב-Home Assistant (כולל `configuration.yaml`, קובצי JSON לקודי מזגנים ב-SmartIR, סקריפטים ועוד).\n\n"
+                "תוכל לבקש ממני למשל:\n"
+                "- `תוסיף הגדרות SmartIR ל-configuration.yaml`\n"
+                "- `תקרא את configuration.yaml ותבדוק תקינות`\n\n"
+                "לפני כל שינוי, אציג לך כרטיס אישור עם תצוגת הקוד (Diff) ואבקש את אישורך בלחיצה."
+            )
+
+        # 2. GitHub Search
+        elif any(w in user_text for w in ["חפש בגיטהאב", "חפש ב-github", "חפש אינטגרצי", "חפש מאגר", "search github"]):
+            clean_query = user_raw
+            for stop in ["חפש בגיטהאב", "חפש ב-github", "חפש אינטגרציה בגיטהאב", "חפש אינטגרציה", "חפש אינטגרציות", "חפש מאגר", "search github", "חפש עבורי", "חפש"]:
+                clean_query = clean_query.replace(stop, "")
+            clean_query = clean_query.strip(" :,-?!")
+            search_res = await tool_engine.execute_tool("search_github_integrations", {"query": clean_query or "home-assistant"})
+            if search_res.get("status") == "ok" and search_res.get("repositories"):
+                repos = search_res["repositories"]
+                lines = [f"🔍 **תוצאות חיפוש ב-GitHub עבור '{clean_query}':**\n"]
+                for r in repos:
+                    lines.append(f"- ⭐ **[{r['repo_name']}]({r['url']})** ({r['stars']} כוכבים)\n  {r['description']}\n")
+                lines.append(f"\nכדי להתקין מאגר, פשוט רשום לי: `התקן את {repos[0]['repo_name']}`")
+                reply = "\n".join(lines)
+            else:
+                reply = f"חיפשתי ב-GitHub עבור '{clean_query}', אך לא נמצאו תוצאות מתאימות."
+
+        # 3. Error scan
+        elif any(w in user_text for w in ["לוג", "שגיא", "תקל", "log", "error"]):
             errors_res = await tool_engine.execute_tool("scan_system_errors", {"limit": 10})
             if errors_res.get("status") == "ok":
                 reply = "סרקתי את המערכת: לא נמצאו שגיאות קריטיות פעילות בלוגים של Home Assistant! 🎉"
@@ -169,7 +226,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 count = errors_res.get("count", 0)
                 reply = f"סרקתי את המערכת: נמצאו {count} שגיאות או אזהרות בלוגים. באפשרותך לבקש פרטים נוספים או להזין מפתח AI בכפתור ה-`+` לניתוח מעמיק."
 
-        # 2. What's on query
+        # 4. What's on query
         elif any(w in user_text for w in ["מה דולק", "איזה אורות דולקים", "מה פועל", "מה עובד"]):
             active = [s.name or s.entity_id for s in hass.states.async_all() if s.domain in ("light", "switch") and s.state == "on"]
             if active:
@@ -177,10 +234,10 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             else:
                 reply = "כל האורות והמתגים בבית כבויים כרגע. 🌙"
 
-        # 3. Custom component installation (e.g. SmartIR, GitHub repos)
-        elif any(w in user_text for w in ["smartir", "סמארטאייר", "סמארט אייר", "התקן אינטגרצי", "תתקין אינטגרצי", "install", "אינטגרציה חדשה"]):
+        # 5. Custom component installation (e.g. SmartIR, GitHub repos)
+        elif not is_question and any(w in user_text for w in ["תתקין", "התקן", "להתקין", "install"]):
             comp = "smartir" if ("smart" in user_text or "סמארט" in user_text) else "custom_component"
-            repo = "smartHomeHub/SmartIR" if comp == "smartir" else user_raw.strip()
+            repo = "smartHomeHub/SmartIR" if comp == "smartir" else user_raw.replace("תתקין", "").replace("התקן", "").replace("את", "").strip()
             inst_res = await tool_engine.execute_tool("install_custom_component", {
                 "github_repo": repo,
                 "component_name": comp,
@@ -194,8 +251,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
             reply = f"הכנתי את חבילת ההתקנה של {comp} מ-GitHub. לחץ על 'אשר והטמע במערכת' בכרטיסייה למטה כדי להתקין אותה ישירות אל custom_components!"
 
-        # 4. Config file editing
-        elif any(w in user_text for w in ["ערוך קובץ", "תערוך קובץ", "configuration.yaml", "קובץ קונפיגורציה", "תוסיף לקובץ", "קובץ yaml"]):
+        # 6. Config file editing
+        elif not is_question and any(w in user_text for w in ["ערוך קובץ", "תערוך קובץ", "configuration.yaml", "קובץ קונפיגורציה", "תוסיף לקובץ", "קובץ yaml"]):
             prop_res = await tool_engine.execute_tool("edit_config_file", {
                 "file_path": "configuration.yaml",
                 "mode": "append",
@@ -210,7 +267,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
             reply = "הכנתי את עדכון הקונפיגורציה. בדוק את התצוגה המקדימה בכרטיסייה למטה ואשר בלחיצה."
 
-        # 5. Restart or reload
+        # 7. Restart or reload
         elif any(w in user_text for w in ["תפעיל מחדש", "הפעלה מחדש", "restart", "reboot", "ריסטרט", "טען מחדש", "reload"]):
             if any(k in user_text for k in ["הפעל", "restart", "ריסטרט", "reboot"]):
                 res_tool = await tool_engine.execute_tool("restart_or_reload", {
@@ -223,7 +280,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                         "title": res_tool["title"],
                         "yaml_preview": res_tool["yaml_preview"],
                     })
-                reply = "הכנתי כרטיס אישור להפעלה מחדש של השרת. לחץ על 'אשר' בכרטיסייה למטה לביצוע."
+                reply = "הכנתי כרטיס אישור להפעלה מחדש של השרת. לחץ על 'אשר והטמע במערכת' בכרטיסייה למטה לביצוע."
             else:
                 res_tool = await tool_engine.execute_tool("restart_or_reload", {
                     "action": "reload_all",
@@ -231,8 +288,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
                 reply = res_tool.get("message", "בוצעה טעינה מחדש של כל ההגדרות והישויות בהצלחה.")
 
-        # 6. Automation proposal
-        elif any(w in user_text for w in ["צור אוטומצי", "תבנה אוטומצי", "אוטומציה"]):
+        # 8. Automation proposal
+        elif not is_question and any(w in user_text for w in ["צור אוטומצי", "תבנה אוטומצי", "אוטומציה"]):
             prop_res = await tool_engine.execute_tool("create_automation", {
                 "alias": "אוטומציה חכמה",
                 "description": f"בקשה מהצ'אט: {user_raw}",
@@ -247,20 +304,28 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
             reply = f"הכנתי הצעה לאוטומציה לפי בקשתך ('{user_raw}'). היא מוצגת למטה וממתינה לאישורך."
 
-        # 7. Direct device control
-        elif any(w in user_text for w in ["תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "שנה"]):
+        # 9. Direct device control
+        elif not is_question and any(w in user_text for w in ["תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "שנה"]):
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
             ctrl_res = await tool_engine.execute_tool("control_device", {
                 "entity_id": "all_lights" if "כל האור" in user_text else user_raw,
                 "action": action,
             })
-            reply = ctrl_res.get("message", "בוצע.")
+            if ctrl_res.get("requires_user_approval"):
+                proposals.append({
+                    "id": ctrl_res["action_id"],
+                    "title": ctrl_res["title"],
+                    "yaml_preview": ctrl_res["yaml_preview"],
+                })
+                reply = f"הכנתי פקודה ל{ctrl_res['title']}. אשר בכרטיסייה למטה לביצוע."
+            else:
+                reply = ctrl_res.get("message", "בוצע.")
 
         else:
             reply = (
                 f"קיבלתי את הודעתך: '{user_raw}'. "
-                "אני פועל במצב מקומי ויכול לערוך קבצים, להתקין אינטגרציות (כמו SmartIR), לשלוט במכשירים ולבנות אוטומציות. "
+                "אני פועל במצב מקומי ויכול לחפש ולהתקין אינטגרציות מ-GitHub, לערוך קבצים (כמו configuration.yaml ו-SmartIR), לשלוט במכשירים ולבנות אוטומציות. "
                 "לחיבור מודלי-על מתקדמים לחשיבה וניתוח מעמיקים, לחץ על ה-`+` למטה והזן מפתח API."
             )
 
@@ -282,13 +347,22 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             f"{base_prompt}\n\n"
             f"### רשימת המכשירים והישויות בבית (Home Entities & Current States):\n"
             f"{entities_text}\n\n"
-            "הנחיות חשובות לפעולה אוטונומית:\n"
-            "1. יש לך סמכות מלאה וכלים אוטונומיים לבצע הכל: עריכת קבצים (edit_config_file), קריאת קבצים (read_config_file), סריקת קבצים (list_config_files), התקנת אינטגרציות מ-GitHub (install_custom_component), בדיקת תקינות וטעינה מחדש/הפעלה מחדש (restart_or_reload), חיבור אינטגרציות (reconnect_or_reload_integration), שליטה במכשירים (control_device) ויצירת אוטומציות (create_automation).\n"
-            "2. לעולם ובשום מצב אל תגיד 'אין לי כלים לערוך קבצים או להתקין אינטגרציות'! בצע את הפעולה בעצמך באמצעות הכלים שלך.\n"
-            "3. כשמשתמש מבקש להגדיר או לחבר מוצר/אינטגרציה (למשל SmartIR, broadlink, מזגנים, טלוויזיות, חיישנים וכו'), בצע את כל הפעולות הנדרשות: התקן את האינטגרציה, ערוך את configuration.yaml, צור קבצי קוד, ובדוק תקינות.\n"
-            "4. כשמשתמש מבקש לשלוט במכשיר (הדלקה, כיבוי, שינוי טמפרטורה), קרא מיד לכלי control_device עם ה-entity_id המדויק מהרשימה.\n"
+            "הנחיות קריטיות לפעולה וסמכויות:\n"
+            "1. יש לך סמכויות מלאות וכלים אמיתיים לחלוטין לבצע הכל במערכת Home Assistant:\n"
+            "   - search_github_integrations: חיפוש כל אינטגרציה או רכיב מותאם ב-GitHub.\n"
+            "   - install_custom_component: הורדה והתקנה אוטונומית של אינטגרציות מ-GitHub ישירות לתוך תיקיית custom_components/.\n"
+            "   - edit_config_file: עריכה וכתיבה של קובצי קונפיגורציה (configuration.yaml, קובצי JSON לקודי מזגנים/טלוויזיות, סקריפטים וכו').\n"
+            "   - read_config_file ו-list_config_files: קריאה וסריקה של קבצים ותיקיות ב-/config/.\n"
+            "   - restart_or_reload: בדיקת תקינות YAML (check_config), טעינה מחדש מהירה (reload_all) והפעלה מחדש של השרת (restart_ha).\n"
+            "   - reconnect_or_reload_integration: טעינה וחיבור מחדש של אינטגרציה קיימת.\n"
+            "   - control_device: שליטה מלאה בכל ישות או מכשיר בבית (הדלקה, כיבוי, מיזוג וכו').\n"
+            "   - create_automation: יצירה והטמעה של אוטומציות חכמות.\n"
+            "   - scan_system_errors: סריקת לוגים ואיתור שגיאות במערכת.\n"
+            "2. איסור מוחלט: לעולם ובשום אופן אל תגיד 'אין לי כלים לערוך קבצים', 'אין לי כלים להתקין אינטגרציות', או 'איני יכול לחבר מוצר חדש'! יש לך את כל הכלים הללו במלואם!\n"
+            "3. כאשר משתמש שואל שאלות היפותטיות או שאלות על יכולותיך (כגון 'מה אתה יכול לעשות?', 'האם אתה יכול להתקין אינטגרציות?', 'האם יש לך כלים לעשות הכל?'): ענה בהסבר ברור בטקסט שכן – יש לך כלים מלאים להתקין אינטגרציות מ-GitHub, לערוך קבצים, לשלוט במכשירים ולבנות אוטומציות, וכי כל פעולה שמשנה הגדרות מלווה בכרטיס אישור לבטיחות. אל תקרא לכלי התקנה או עריכה לפני שהמשתמש ביקש פעולה קונקרטית!\n"
+            "4. כאשר משתמש מבקש לבצע פעולה בפועל (לחבר מוצר, להתקין אינטגרציה, לערוך קובץ, לשלוט במכשיר, ליצור אוטומציה): בצע את כל הפעולות הנדרשות וקרא לכלים המתאימים (search_github_integrations, install_custom_component, edit_config_file, control_device וכו'). המערכת תכין עבור המשתמש כרטיס אישור ייעודי.\n"
             "5. כשמשתמש שואל מה פתוח/דולק או על נתון של מכשיר, ענה ישירות לפי המצב הנוכחי ברשימה או קרא לכלי המתאים.\n"
-            "6. ענה תמיד בעברית טבעית, תמציתית וישירה."
+            "6. ענה תמיד בעברית טבעית, שוטפת, מקצועית וישירה."
         )
 
         # Step 1: Call Model with Tools

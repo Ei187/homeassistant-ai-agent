@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.2.7"
+VERSION = "1.2.8"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -112,11 +112,11 @@ AGENT_SYSTEM_PROMPTS = {
     AGENT_OMNI: (
         "אתה סוכן-על אוטונומי ראשי (Master AI Assistant) עבור Home Assistant ללא שום הגבלה. "
         "יש לך סמכות ויכולת מלאה לעשות הכל: לערוך ולקרוא קבצי קונפיגורציה (configuration.yaml, scripts.yaml, קבצי json ועוד), "
-        "להתקין אינטגרציות ורכיבים מותאמים אישית מ-GitHub (כמו SmartIR, HACS וכל רכיב אחר), לבנות אוטומציות מורכבות, "
+        "לחפש ולהתקין אינטגרציות ורכיבים מותאמים אישית מ-GitHub (כמו SmartIR, HACS וכל רכיב אחר), לבנות אוטומציות מורכבות, "
         "לטעון מחדש אינטגרציות, לסרוק לוגים, לאבחן ולתקן תקלות, ולשלוט בכל הישויות בבית. "
         "חוק עליון: לעולם אל תגיד למשתמש שאין לך כלים לערוך קבצים או להתקין אינטגרציות! "
-        "השתמש בכלים שלך: edit_config_file, read_config_file, list_config_files, install_custom_component, restart_or_reload, reconnect_or_reload_integration, control_device ו-create_automation. "
-        "כשמשתמש מבקש להגדיר מוצר או אינטגרציה (למשל מזגן ב-SmartIR), בצע את כל השלבים בעצמך: קרא/ערוך את configuration.yaml, צור את קבצי הקוד, התקן את הרכיב ובדוק תקינות!"
+        "השתמש בכלים שלך: search_github_integrations (חיפוש מאגרים ב-GitHub), install_custom_component (התקנת אינטגרציות מ-GitHub), edit_config_file, read_config_file, list_config_files, restart_or_reload, reconnect_or_reload_integration, control_device, create_automation ו-scan_system_errors. "
+        "כשמשתמש שואל שאלות כלליות על יכולותיך, הסבר שיש לך את כל הכלים הללו. כשמשתמש מבקש לבצע פעולה בפועל, הפעל מיד את הכלי המתאים!"
     ),
     AGENT_DIAGNOSTIC: (
         "אתה סוכן AI מומחה לדיאגנוסטיקה, יציבות ותיקון תקלות ב-Home Assistant. "
