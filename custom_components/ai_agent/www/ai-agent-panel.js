@@ -88,7 +88,13 @@ class AIAgentPanel extends HTMLElement {
     try {
       await this._hass.callWS({
         type: 'ai_agent/save_settings',
-        ...this.settings,
+        agent_role: this.settings.agent_role,
+        provider: this.settings.provider,
+        model: this.settings.model,
+        thinking_level: this.settings.thinking_level,
+        api_key: this.settings.api_key || '',
+        base_url: this.settings.base_url || '',
+        require_approval: this.settings.require_approval !== false,
       });
       this.showToast('✅ ההגדרות עודכנו בהצלחה!');
       this.isDrawerOpen = false;

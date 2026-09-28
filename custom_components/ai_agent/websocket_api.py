@@ -16,10 +16,13 @@ from .const import (
     CONF_AGENT_ROLE,
     CONF_API_KEY,
     CONF_BASE_URL,
+    CONF_MOBILE_NOTIFY_SERVICE,
     CONF_MODEL,
+    CONF_NOTIFY_MOBILE,
     CONF_PROVIDER,
     CONF_REQUIRE_APPROVAL,
     CONF_THINKING_LEVEL,
+    DEFAULT_SETTINGS,
     DOMAIN,
 )
 from .tools import PENDING_ACTIONS, TOOLS_SCHEMA, ToolEngine, async_resolve_action, get_entities_context
@@ -48,16 +51,20 @@ def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     connection.send_result(msg["id"], safe_settings)
 
 
-@websocket_api.websocket_command({
-    vol.Required("type"): "ai_agent/save_settings",
-    vol.Optional(CONF_AGENT_ROLE): str,
-    vol.Optional(CONF_PROVIDER): str,
-    vol.Optional(CONF_MODEL): str,
-    vol.Optional(CONF_THINKING_LEVEL): str,
-    vol.Optional(CONF_API_KEY): str,
-    vol.Optional(CONF_BASE_URL): str,
-    vol.Optional(CONF_REQUIRE_APPROVAL): bool,
-})
+@websocket_api.websocket_command(
+    vol.Schema({
+        vol.Required("type"): "ai_agent/save_settings",
+        vol.Optional(CONF_AGENT_ROLE): str,
+        vol.Optional(CONF_PROVIDER): str,
+        vol.Optional(CONF_MODEL): str,
+        vol.Optional(CONF_THINKING_LEVEL): str,
+        vol.Optional(CONF_API_KEY): vol.Any(str, None),
+        vol.Optional(CONF_BASE_URL): str,
+        vol.Optional(CONF_REQUIRE_APPROVAL): bool,
+        vol.Optional(CONF_NOTIFY_MOBILE): bool,
+        vol.Optional(CONF_MOBILE_NOTIFY_SERVICE): str,
+    }, extra=vol.ALLOW_EXTRA)
+)
 @websocket_api.async_response
 async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Save updated settings from the frontend."""
@@ -68,15 +75,27 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         if key in msg:
             current[key] = msg[key]
 
-    if CONF_API_KEY in msg and msg[CONF_API_KEY] and not msg[CONF_API_KEY].startswith("••••"):
-        current[CONF_API_KEY] = msg[CONF_API_KEY]
+    if CONF_API_KEY in msg:
+        raw_key = msg[CONF_API_KEY]
+        # Update key if cleared or changed, ignoring masked placeholder
+        if not raw_key or not str(raw_key).startswith("••••"):
+            current[CONF_API_KEY] = raw_key or ""
 
     await storage.async_save(current)
 
     # Sync with config entry options so both entry options and storage stay in lockstep
     entry = hass.data.get(DOMAIN, {}).get("entry")
     if entry:
-        hass.config_entries.async_update_entry(entry, options=dict(current))
+        valid_options = {
+            CONF_AGENT_ROLE: current.get(CONF_AGENT_ROLE, DEFAULT_SETTINGS[CONF_AGENT_ROLE]),
+            CONF_PROVIDER: current.get(CONF_PROVIDER, DEFAULT_SETTINGS[CONF_PROVIDER]),
+            CONF_MODEL: current.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL]),
+            CONF_THINKING_LEVEL: current.get(CONF_THINKING_LEVEL, DEFAULT_SETTINGS[CONF_THINKING_LEVEL]),
+            CONF_API_KEY: current.get(CONF_API_KEY, ""),
+            CONF_BASE_URL: current.get(CONF_BASE_URL, DEFAULT_SETTINGS[CONF_BASE_URL]),
+            CONF_REQUIRE_APPROVAL: current.get(CONF_REQUIRE_APPROVAL, True),
+        }
+        hass.config_entries.async_update_entry(entry, options=valid_options)
 
     # Refresh active client
     await hass.data[DOMAIN]["refresh_client"]()
