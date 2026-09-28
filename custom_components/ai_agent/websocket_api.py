@@ -177,7 +177,61 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             else:
                 reply = "כל האורות והמתגים בבית כבויים כרגע. 🌙"
 
-        # 3. Automation proposal
+        # 3. Custom component installation (e.g. SmartIR, GitHub repos)
+        elif any(w in user_text for w in ["smartir", "סמארטאייר", "סמארט אייר", "התקן אינטגרצי", "תתקין אינטגרצי", "install", "אינטגרציה חדשה"]):
+            comp = "smartir" if ("smart" in user_text or "סמארט" in user_text) else "custom_component"
+            repo = "smartHomeHub/SmartIR" if comp == "smartir" else user_raw.strip()
+            inst_res = await tool_engine.execute_tool("install_custom_component", {
+                "github_repo": repo,
+                "component_name": comp,
+                "reason": f"התקנת אינטגרציית {comp} ממאגר GitHub: {repo}",
+            })
+            if inst_res.get("requires_user_approval"):
+                proposals.append({
+                    "id": inst_res["action_id"],
+                    "title": inst_res["title"],
+                    "yaml_preview": inst_res["yaml_preview"],
+                })
+            reply = f"הכנתי את חבילת ההתקנה של {comp} מ-GitHub. לחץ על 'אשר והטמע במערכת' בכרטיסייה למטה כדי להתקין אותה ישירות אל custom_components!"
+
+        # 4. Config file editing
+        elif any(w in user_text for w in ["ערוך קובץ", "תערוך קובץ", "configuration.yaml", "קובץ קונפיגורציה", "תוסיף לקובץ", "קובץ yaml"]):
+            prop_res = await tool_engine.execute_tool("edit_config_file", {
+                "file_path": "configuration.yaml",
+                "mode": "append",
+                "content": f"# תוספת קונפיגורציה לפי בקשה: {user_raw}\n",
+                "reason": f"עדכון קונפיגורציה: {user_raw}",
+            })
+            if prop_res.get("requires_user_approval"):
+                proposals.append({
+                    "id": prop_res["action_id"],
+                    "title": prop_res["title"],
+                    "yaml_preview": prop_res["yaml_preview"],
+                })
+            reply = "הכנתי את עדכון הקונפיגורציה. בדוק את התצוגה המקדימה בכרטיסייה למטה ואשר בלחיצה."
+
+        # 5. Restart or reload
+        elif any(w in user_text for w in ["תפעיל מחדש", "הפעלה מחדש", "restart", "reboot", "ריסטרט", "טען מחדש", "reload"]):
+            if any(k in user_text for k in ["הפעל", "restart", "ריסטרט", "reboot"]):
+                res_tool = await tool_engine.execute_tool("restart_or_reload", {
+                    "action": "restart_ha",
+                    "reason": f"בקשת הפעלה מחדש: {user_raw}",
+                })
+                if res_tool.get("requires_user_approval"):
+                    proposals.append({
+                        "id": res_tool["action_id"],
+                        "title": res_tool["title"],
+                        "yaml_preview": res_tool["yaml_preview"],
+                    })
+                reply = "הכנתי כרטיס אישור להפעלה מחדש של השרת. לחץ על 'אשר' בכרטיסייה למטה לביצוע."
+            else:
+                res_tool = await tool_engine.execute_tool("restart_or_reload", {
+                    "action": "reload_all",
+                    "reason": "טעינה מחדש של הגדרות",
+                })
+                reply = res_tool.get("message", "בוצעה טעינה מחדש של כל ההגדרות והישויות בהצלחה.")
+
+        # 6. Automation proposal
         elif any(w in user_text for w in ["צור אוטומצי", "תבנה אוטומצי", "אוטומציה"]):
             prop_res = await tool_engine.execute_tool("create_automation", {
                 "alias": "אוטומציה חכמה",
@@ -193,7 +247,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
             reply = f"הכנתי הצעה לאוטומציה לפי בקשתך ('{user_raw}'). היא מוצגת למטה וממתינה לאישורך."
 
-        # 4. Direct device control
+        # 7. Direct device control
         elif any(w in user_text for w in ["תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "שנה"]):
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
@@ -206,8 +260,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         else:
             reply = (
                 f"קיבלתי את הודעתך: '{user_raw}'. "
-                "אני פועל במצב מקומי חינמי ויכול לשלוט במכשירים (למשל 'תדליק אור בסלון', 'מה דולק בבית'), "
-                "לסרוק שגיאות ולבנות אוטומציות. לחיבור מודלי-על מתקדמים, לחץ על ה-`+` למטה והזן מפתח API."
+                "אני פועל במצב מקומי ויכול לערוך קבצים, להתקין אינטגרציות (כמו SmartIR), לשלוט במכשירים ולבנות אוטומציות. "
+                "לחיבור מודלי-על מתקדמים לחשיבה וניתוח מעמיקים, לחץ על ה-`+` למטה והזן מפתח API."
             )
 
         connection.send_result(
@@ -228,10 +282,13 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             f"{base_prompt}\n\n"
             f"### רשימת המכשירים והישויות בבית (Home Entities & Current States):\n"
             f"{entities_text}\n\n"
-            "הנחיות חשובות לפעולה:\n"
-            "1. כשמשתמש מבקש לשלוט במכשיר (הדלקה, כיבוי, שינוי טמפרטורה), קרא מיד לכלי control_device עם ה-entity_id המדויק מהרשימה.\n"
-            "2. כשמשתמש שואל מה פתוח/דולק או על נתון של מכשיר, ענה ישירות לפי המצב הנוכחי ברשימה או קרא לכלי המתאים.\n"
-            "3. ענה תמיד בעברית טבעית, תמציתית וישירה."
+            "הנחיות חשובות לפעולה אוטונומית:\n"
+            "1. יש לך סמכות מלאה וכלים אוטונומיים לבצע הכל: עריכת קבצים (edit_config_file), קריאת קבצים (read_config_file), סריקת קבצים (list_config_files), התקנת אינטגרציות מ-GitHub (install_custom_component), בדיקת תקינות וטעינה מחדש/הפעלה מחדש (restart_or_reload), חיבור אינטגרציות (reconnect_or_reload_integration), שליטה במכשירים (control_device) ויצירת אוטומציות (create_automation).\n"
+            "2. לעולם ובשום מצב אל תגיד 'אין לי כלים לערוך קבצים או להתקין אינטגרציות'! בצע את הפעולה בעצמך באמצעות הכלים שלך.\n"
+            "3. כשמשתמש מבקש להגדיר או לחבר מוצר/אינטגרציה (למשל SmartIR, broadlink, מזגנים, טלוויזיות, חיישנים וכו'), בצע את כל הפעולות הנדרשות: התקן את האינטגרציה, ערוך את configuration.yaml, צור קבצי קוד, ובדוק תקינות.\n"
+            "4. כשמשתמש מבקש לשלוט במכשיר (הדלקה, כיבוי, שינוי טמפרטורה), קרא מיד לכלי control_device עם ה-entity_id המדויק מהרשימה.\n"
+            "5. כשמשתמש שואל מה פתוח/דולק או על נתון של מכשיר, ענה ישירות לפי המצב הנוכחי ברשימה או קרא לכלי המתאים.\n"
+            "6. ענה תמיד בעברית טבעית, תמציתית וישירה."
         )
 
         # Step 1: Call Model with Tools
