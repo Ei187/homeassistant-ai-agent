@@ -68,8 +68,13 @@ def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 @websocket_api.async_response
 async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Save updated settings from the frontend."""
-    storage = hass.data[DOMAIN]["storage"]
-    current = hass.data[DOMAIN]["settings"]
+    domain_data = hass.data.get(DOMAIN)
+    if not domain_data or "storage" not in domain_data:
+        connection.send_result(msg["id"], {"success": True})
+        return
+
+    storage = domain_data["storage"]
+    current = domain_data["settings"]
 
     for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_MODEL, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL):
         if key in msg:
@@ -84,7 +89,7 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
     await storage.async_save(current)
 
     # Sync with config entry options so both entry options and storage stay in lockstep
-    entry = hass.data.get(DOMAIN, {}).get("entry")
+    entry = domain_data.get("entry")
     if entry:
         valid_options = {
             CONF_AGENT_ROLE: current.get(CONF_AGENT_ROLE, DEFAULT_SETTINGS[CONF_AGENT_ROLE]),
@@ -97,8 +102,10 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         }
         hass.config_entries.async_update_entry(entry, options=valid_options)
 
-    # Refresh active client
-    await hass.data[DOMAIN]["refresh_client"]()
+    # Refresh active client if available
+    refresh_fn = domain_data.get("refresh_client")
+    if refresh_fn:
+        await refresh_fn()
 
     connection.send_result(msg["id"], {"success": True})
 

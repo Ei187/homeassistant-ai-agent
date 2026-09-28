@@ -6,6 +6,9 @@
         "title": "AI Agent Pro",
         "description": "Fast single-click setup"
       }
+    },
+    "abort": {
+      "already_configured": "AI Agent Pro is already configured in Home Assistant."
     }
   },
   "options": {

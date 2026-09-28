@@ -6,6 +6,9 @@
         "title": "AI Agent Pro",
         "description": "התקנה מהירה בלחיצה אחת"
       }
+    },
+    "abort": {
+      "already_configured": "האינטגרציה כבר מוגדרת במערכת."
     }
   },
   "options": {

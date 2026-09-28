@@ -13,10 +13,8 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     SelectSelector,
     SelectSelectorConfig,
-    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
-    TextSelectorType,
 )
 
 from .const import (
@@ -50,14 +48,14 @@ class AIAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         """Create the options flow so user can configure directly from integration page."""
-        return AIAgentOptionsFlowHandler()
+        return AIAgentOptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Single-click instant setup step without complex questions."""
-        if user_input is not None:
-            await self.async_set_unique_id(DOMAIN)
-            self._abort_if_unique_id_configured()
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
 
+        if user_input is not None:
             return self.async_create_entry(
                 title="AI Agent Pro",
                 data=dict(DEFAULT_SETTINGS),
@@ -75,12 +73,22 @@ class AIAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class AIAgentOptionsFlowHandler(config_entries.OptionsFlow):
     """Direct configuration inside Settings -> Devices & Services -> AI Agent Pro -> Configure."""
 
+    def __init__(self, config_entry: config_entries.ConfigEntry | None = None) -> None:
+        """Initialize options flow supporting all HA core versions."""
+        if config_entry is not None:
+            self._config_entry = config_entry
+
+    @property
+    def _entry(self) -> config_entries.ConfigEntry | None:
+        return getattr(self, "_config_entry", None) or getattr(self, "config_entry", None)
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage options directly from the integration page."""
         errors: dict[str, str] = {}
-        settings = dict(self.config_entry.data)
-        if self.config_entry.options:
-            settings.update(self.config_entry.options)
+        entry = self._entry
+        settings = dict(entry.data) if entry and entry.data else dict(DEFAULT_SETTINGS)
+        if entry and entry.options:
+            settings.update(entry.options)
 
         domain_settings = self.hass.data.get(DOMAIN, {}).get("settings", {})
         for k, v in domain_settings.items():
@@ -111,37 +119,37 @@ class AIAgentOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_AGENT_ROLE,
                 default=settings.get(CONF_AGENT_ROLE, DEFAULT_SETTINGS[CONF_AGENT_ROLE]),
             ): SelectSelector(
-                SelectSelectorConfig(options=role_options, mode=SelectSelectorMode.DROPDOWN)
+                SelectSelectorConfig(options=role_options, mode="dropdown")
             ),
             vol.Required(
                 CONF_PROVIDER,
                 default=settings.get(CONF_PROVIDER, DEFAULT_SETTINGS[CONF_PROVIDER]),
             ): SelectSelector(
-                SelectSelectorConfig(options=provider_options, mode=SelectSelectorMode.DROPDOWN)
+                SelectSelectorConfig(options=provider_options, mode="dropdown")
             ),
             vol.Required(
                 CONF_MODEL,
                 default=settings.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL]),
             ): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.TEXT)
+                TextSelectorConfig(type="text")
             ),
             vol.Required(
                 CONF_THINKING_LEVEL,
                 default=settings.get(CONF_THINKING_LEVEL, DEFAULT_SETTINGS[CONF_THINKING_LEVEL]),
             ): SelectSelector(
-                SelectSelectorConfig(options=thinking_options, mode=SelectSelectorMode.DROPDOWN)
+                SelectSelectorConfig(options=thinking_options, mode="dropdown")
             ),
             vol.Optional(
                 CONF_API_KEY,
                 default=settings.get(CONF_API_KEY, ""),
             ): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                TextSelectorConfig(type="password")
             ),
             vol.Optional(
                 CONF_BASE_URL,
                 default=settings.get(CONF_BASE_URL, DEFAULT_SETTINGS[CONF_BASE_URL]),
             ): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.URL)
+                TextSelectorConfig(type="url")
             ),
             vol.Required(
                 CONF_REQUIRE_APPROVAL,

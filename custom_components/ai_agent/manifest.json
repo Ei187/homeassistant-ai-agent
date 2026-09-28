@@ -1,6 +1,7 @@
 {
   "domain": "ai_agent",
   "name": "AI Agent Pro",
+  "after_dependencies": ["http", "frontend", "websocket_api", "conversation"],
   "codeowners": ["@Ei187"],
   "config_flow": true,
   "documentation": "https://github.com/Ei187/homeassistant-ai-agent",
@@ -8,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Ei187/homeassistant-ai-agent/issues",
   "requirements": [],
-  "version": "1.2.3"
+  "version": "1.2.4"
 }

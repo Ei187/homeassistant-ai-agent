@@ -9,8 +9,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.components import frontend
+
+try:
+    from homeassistant.components.http import StaticPathConfig
+except ImportError:
+    StaticPathConfig = None
 
 from .ai_client import AIClient
 from .const import (
@@ -39,14 +43,22 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     www_dir = Path(__file__).parent / "www"
     js_file = www_dir / "ai-agent-panel.js"
     if js_file.exists():
-        await hass.http.async_register_static_paths([
-            StaticPathConfig(
-                url_path="/ai_agent_panel/ai-agent-panel.js",
-                path=str(js_file),
+        if hasattr(hass.http, "async_register_static_paths") and StaticPathConfig is not None:
+            await hass.http.async_register_static_paths([
+                StaticPathConfig(
+                    url_path="/ai_agent_panel/ai-agent-panel.js",
+                    path=str(js_file),
+                    cache_headers=False,
+                )
+            ])
+            _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js via async_register_static_paths")
+        elif hasattr(hass.http, "register_static_path"):
+            hass.http.register_static_path(
+                "/ai_agent_panel/ai-agent-panel.js",
+                str(js_file),
                 cache_headers=False,
             )
-        ])
-        _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js")
+            _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js via register_static_path")
 
     async_setup_websocket_api(hass)
 
