@@ -51,20 +51,18 @@ def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     connection.send_result(msg["id"], safe_settings)
 
 
-@websocket_api.websocket_command(
-    vol.Schema({
-        vol.Required("type"): "ai_agent/save_settings",
-        vol.Optional(CONF_AGENT_ROLE): str,
-        vol.Optional(CONF_PROVIDER): str,
-        vol.Optional(CONF_MODEL): str,
-        vol.Optional(CONF_THINKING_LEVEL): str,
-        vol.Optional(CONF_API_KEY): vol.Any(str, None),
-        vol.Optional(CONF_BASE_URL): str,
-        vol.Optional(CONF_REQUIRE_APPROVAL): bool,
-        vol.Optional(CONF_NOTIFY_MOBILE): bool,
-        vol.Optional(CONF_MOBILE_NOTIFY_SERVICE): str,
-    }, extra=vol.ALLOW_EXTRA)
-)
+@websocket_api.websocket_command({
+    vol.Required("type"): "ai_agent/save_settings",
+    vol.Optional(CONF_AGENT_ROLE): str,
+    vol.Optional(CONF_PROVIDER): str,
+    vol.Optional(CONF_MODEL): str,
+    vol.Optional(CONF_THINKING_LEVEL): str,
+    vol.Optional(CONF_API_KEY): vol.Any(str, None),
+    vol.Optional(CONF_BASE_URL): str,
+    vol.Optional(CONF_REQUIRE_APPROVAL): bool,
+    vol.Optional(CONF_NOTIFY_MOBILE): bool,
+    vol.Optional(CONF_MOBILE_NOTIFY_SERVICE): str,
+})
 @websocket_api.async_response
 async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Save updated settings from the frontend."""
