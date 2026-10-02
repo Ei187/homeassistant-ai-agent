@@ -245,9 +245,10 @@ class AIAgentPanel extends HTMLElement {
       return id;
     });
 
-    // Step 4: Ensure headings and numbered lists start on new lines even if squashed by LLM
+    // Step 4: Ensure headings, bullets and numbered lists start on new lines even if squashed by LLM
     processed = processed.replace(/(?<!\n)(#{1,4}\s+)/g, '\n\n$1');
     processed = processed.replace(/(?<!\n)(\d+[\.\)]\s+)/g, '\n$1');
+    processed = processed.replace(/(?<!\n)([ \t]*[-*•]\s+)/g, '\n$1');
 
     // Step 5: Handle Headings (#, ##, ###, ####)
     processed = processed.replace(/^[ \t]*####[ \t]+(.*?)$/gm, '<h4 class="md-heading md-h4">$1</h4>');
@@ -586,32 +587,35 @@ class AIAgentPanel extends HTMLElement {
         .msg-hover-actions {
           display: flex;
           gap: 6px;
-          margin-top: 4px;
-          opacity: 0.85;
-          transition: opacity 0.2s;
+          margin-top: 5px;
+          margin-right: 4px;
+          opacity: 0.9;
+          transition: all 0.2s;
+          align-self: flex-start;
         }
         .message-user-wrapper:hover .msg-hover-actions {
           opacity: 1;
         }
         .msg-action-btn {
           background: rgba(255, 255, 255, 0.08);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          color: #a1a1a6;
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          color: #d1d1d6;
           border-radius: 980px;
-          padding: 4px 10px;
+          padding: 4px 11px;
           font-size: 11.5px;
           font-weight: 500;
           cursor: pointer;
-          display: flex;
+          display: inline-flex;
           align-items: center;
-          gap: 4px;
-          transition: all 0.2s;
+          gap: 5px;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           outline: none;
         }
         .msg-action-btn:hover {
-          background: rgba(10, 132, 255, 0.25);
-          color: #2997ff;
+          background: rgba(10, 132, 255, 0.22);
+          color: #64d2ff;
           border-color: #0a84ff;
+          transform: translateY(-1px);
         }
 
         /* Inline Edit Box */
@@ -1266,10 +1270,9 @@ class AIAgentPanel extends HTMLElement {
                       <div class="user-msg-text">${this.escapeHtml(msg.content)}</div>
                     </div>
                     <div class="msg-hover-actions">
-                      <button class="msg-action-btn" data-edit-index="${index}" title="ערוך הודעה זו ושלח שוב לתיקון טעויות">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      <button class="msg-action-btn" data-edit-index="${index}" title="לחץ לעריכת ההודעה ושליחה מחדש">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                         </svg>
                         <span>ערוך שורה</span>
                       </button>
