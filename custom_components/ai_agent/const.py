@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
