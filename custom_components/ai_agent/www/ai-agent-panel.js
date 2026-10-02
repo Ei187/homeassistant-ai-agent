@@ -385,9 +385,13 @@ class AIAgentPanel extends HTMLElement {
     this.scrollToBottom();
   }
 
-  render() {
+  render(preserveScroll = true) {
     const s = this.settings;
     const isFreeMode = !s.api_key;
+
+    const prevHostScroll = this.scrollTop;
+    const chatScrollBefore = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
+    const prevChatScroll = (preserveScroll && chatScrollBefore) ? chatScrollBefore.scrollTop : null;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -1594,6 +1598,17 @@ class AIAgentPanel extends HTMLElement {
         }
       };
     });
+
+    // Restore scroll positions so editing or cancelling never jumps to the top
+    if (prevChatScroll !== null) {
+      const newChat = root.querySelector('#chat-scroll');
+      if (newChat) {
+        newChat.scrollTop = prevChatScroll;
+      }
+    }
+    if (prevHostScroll) {
+      this.scrollTop = prevHostScroll;
+    }
   }
 }
 
