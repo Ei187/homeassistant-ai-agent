@@ -5,8 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import os
-import urllib.request
-import urllib.error
 import zipfile
 from typing import Any
 import aiohttp
@@ -18,6 +16,7 @@ from homeassistant.components.update import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components import persistent_notification
 
@@ -39,8 +38,8 @@ async def async_setup_entry(
 class AIAgentUpdateEntity(UpdateEntity):
     """Update entity for AI Agent Pro."""
 
-    _attr_has_entity_name = True
-    _attr_name = "Update"
+    _attr_has_entity_name = False
+    _attr_name = "AI Agent Pro Update"
     _attr_title = "AI Agent Pro"
     _attr_icon = "mdi:robot"
     _attr_supported_features = UpdateEntityFeature.INSTALL | UpdateEntityFeature.RELEASE_NOTES
@@ -59,17 +58,17 @@ class AIAgentUpdateEntity(UpdateEntity):
         """Check GitHub for the latest tag/release."""
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers={"User-Agent": "HomeAssistant-AIAgentPro"}, timeout=10) as resp:
-                    if resp.status == 200:
-                        tags = await resp.json()
-                        if tags and isinstance(tags, list):
-                            latest_tag = str(tags[0].get("name", "")).strip().lstrip("v")
-                            if latest_tag:
-                                self._attr_latest_version = latest_tag
-                                self._attr_installed_version = VERSION
-                                if latest_tag != VERSION:
-                                    self._attr_release_summary = f"גרסה חדשה v{latest_tag} זמינה להתקנה."
+            session = async_get_clientsession(self.hass)
+            async with session.get(url, headers={"User-Agent": "HomeAssistant-AIAgentPro"}, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    tags = await resp.json()
+                    if tags and isinstance(tags, list):
+                        latest_tag = str(tags[0].get("name", "")).strip().lstrip("v")
+                        if latest_tag:
+                            self._attr_latest_version = latest_tag
+                            self._attr_installed_version = VERSION
+                            if latest_tag != VERSION:
+                                self._attr_release_summary = f"גרסה חדשה v{latest_tag} זמינה להתקנה."
         except Exception as err:
             _LOGGER.warning("Could not check for AI Agent Pro updates: %s", err)
 
@@ -79,35 +78,44 @@ class AIAgentUpdateEntity(UpdateEntity):
         raw_v = str(version or self._attr_latest_version or VERSION).strip().lstrip("v")
         tag = f"v{raw_v}"
 
-        def _download_and_extract() -> None:
-            # Try multiple download URLs to avoid rate limits or 404s
-            urls_to_try = [
-                f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/ai_agent.zip",
-                f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag}.zip",
-                f"https://codeload.github.com/{GITHUB_REPO}/zip/refs/tags/{tag}",
-                f"https://api.github.com/repos/{GITHUB_REPO}/zipball/{tag}",
-                f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip",
-            ]
+        session = async_get_clientsession(self.hass)
 
-            zip_data = None
-            last_err = None
+        urls_to_try = [
+            f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/ai_agent.zip",
+            f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag}.zip",
+            f"https://codeload.github.com/{GITHUB_REPO}/zip/refs/tags/{tag}",
+            f"https://api.github.com/repos/{GITHUB_REPO}/zipball/{tag}",
+            f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip",
+        ]
 
-            for u in urls_to_try:
-                try:
-                    req = urllib.request.Request(u, headers={"User-Agent": "HomeAssistant-AIAgentPro"})
-                    with urllib.request.urlopen(req, timeout=30) as response:
-                        if response.status == 200:
-                            zip_data = response.read()
-                            _LOGGER.info("Successfully downloaded update from %s (%d bytes)", u, len(zip_data))
-                            break
-                except Exception as ex:
-                    last_err = ex
-                    _LOGGER.debug("Download from %s failed: %s", u, ex)
+        zip_data = None
+        last_err = None
 
-            if not zip_data:
-                raise RuntimeError(f"לא ניתן היה להוריד את חבילת העדכון מ-GitHub: {last_err}")
+        for u in urls_to_try:
+            try:
+                _LOGGER.info("Attempting download from %s", u)
+                async with session.get(
+                    u,
+                    headers={"User-Agent": "HomeAssistant-AIAgentPro"},
+                    timeout=aiohttp.ClientTimeout(total=45),
+                    allow_redirects=True,
+                ) as response:
+                    if response.status == 200:
+                        zip_data = await response.read()
+                        _LOGGER.info("Successfully downloaded update from %s (%d bytes)", u, len(zip_data))
+                        break
+                    else:
+                        _LOGGER.warning("Download from %s returned status %d", u, response.status)
+            except Exception as ex:
+                last_err = ex
+                _LOGGER.warning("Download from %s failed: %s", u, ex)
 
-            zf = zipfile.ZipFile(io.BytesIO(zip_data))
+        if not zip_data:
+            _LOGGER.error("All download URLs failed for AI Agent Pro update to %s: %s", tag, last_err)
+            raise HomeAssistantError(f"לא ניתן היה להוריד את חבילת העדכון מ-GitHub: {last_err}")
+
+        def _extract(data: bytes) -> int:
+            zf = zipfile.ZipFile(io.BytesIO(data))
             dest_dir = self.hass.config.path("custom_components", "ai_agent")
             prefix = "custom_components/ai_agent/"
 
@@ -123,7 +131,6 @@ class AIAgentUpdateEntity(UpdateEntity):
                     extracted_count += 1
 
             if extracted_count == 0:
-                # Fallback: check if the zip contains the component at top level
                 manifest_members = [m for m in zf.namelist() if m.endswith("manifest.json") and not m.endswith("/")]
                 if manifest_members:
                     root_prefix = manifest_members[0].rsplit("manifest.json", 1)[0]
@@ -137,12 +144,15 @@ class AIAgentUpdateEntity(UpdateEntity):
                             extracted_count += 1
 
             _LOGGER.info("Extracted %d files to %s", extracted_count, dest_dir)
+            return extracted_count
 
         try:
-            await self.hass.async_add_executor_job(_download_and_extract)
+            count = await self.hass.async_add_executor_job(_extract, zip_data)
+            if count == 0:
+                raise RuntimeError("No files were extracted from the update archive")
         except Exception as err:
-            _LOGGER.exception("Failed to install AI Agent Pro update: %s", err)
-            raise HomeAssistantError(f"עדכון נכשל: {err}") from err
+            _LOGGER.exception("Failed to extract AI Agent Pro update: %s", err)
+            raise HomeAssistantError(f"חילוץ קבצי העדכון נכשל: {err}") from err
 
         self._attr_installed_version = raw_v
         self.async_write_ha_state()
@@ -153,9 +163,4 @@ class AIAgentUpdateEntity(UpdateEntity):
             f"הקבצים הוטמעו בהצלחה בתיקיית המערכת. מומלץ להפעיל מחדש את Home Assistant (הגדרות ➔ מערכת ➔ הפעלה מחדש).",
             title=f"AI Agent Pro עודכן ל-v{raw_v}",
             notification_id="ai_agent_update_success",
-        )
-
-        # Defer entry reload asynchronously in background to avoid cancelling this running install call
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self.entry.entry_id)
         )
