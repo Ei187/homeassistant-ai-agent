@@ -40,11 +40,12 @@ class AIAgentUpdateEntity(UpdateEntity):
     """Update entity for AI Agent Pro."""
 
     _attr_has_entity_name = True
-    _attr_name = "Update"
+    _attr_name = None
     _attr_title = "AI Agent Pro"
     _attr_icon = "mdi:robot"
     _attr_supported_features = (
         UpdateEntityFeature.INSTALL
+        | UpdateEntityFeature.SPECIFIC_VERSION
         | UpdateEntityFeature.RELEASE_NOTES
         | UpdateEntityFeature.PROGRESS
     )
@@ -57,7 +58,12 @@ class AIAgentUpdateEntity(UpdateEntity):
         self._attr_installed_version = VERSION
         self._attr_latest_version = VERSION
         self._attr_release_url = f"https://github.com/{GITHUB_REPO}/releases"
-        self._attr_release_summary = ""
+        self._attr_release_summary = f"AI Agent Pro v{VERSION}"
+
+    @property
+    def entity_picture(self) -> str | None:
+        """Override to None so Home Assistant uses the robot MDI icon instead of 404 brand image."""
+        return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -69,6 +75,16 @@ class AIAgentUpdateEntity(UpdateEntity):
             model="AI Agent Pro Assistant",
             sw_version=self._attr_installed_version,
         )
+
+    async def async_release_notes(self) -> str | None:
+        """Return full release notes for the frontend dialog."""
+        if self._attr_release_summary and len(self._attr_release_summary.strip()) > 0:
+            return self._attr_release_summary
+        return f"### AI Agent Pro v{self._attr_latest_version}\n\nגרסה חדשה של AI Agent Pro זמינה להתקנה."
+
+    def release_notes(self) -> str | None:
+        """Synchronous fallback for release notes."""
+        return self._attr_release_summary or f"AI Agent Pro v{self._attr_latest_version}"
 
     async def async_update(self) -> None:
         """Check GitHub for the latest release."""
@@ -86,11 +102,15 @@ class AIAgentUpdateEntity(UpdateEntity):
                     if tag:
                         self._attr_latest_version = tag
                         self._attr_release_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
-                        self._attr_release_summary = data.get("body", f"גרסה חדשה v{tag} זמינה להתקנה.")
+                        body = data.get("body")
+                        if body and len(body.strip()) > 0:
+                            self._attr_release_summary = body
+                        else:
+                            self._attr_release_summary = f"גרסה חדשה v{tag} זמינה להתקנה."
         except Exception as err:
             _LOGGER.warning("Could not check for AI Agent Pro updates: %s", err)
 
-    async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
+    async def async_install(self, version: str | None = None, backup: bool = False, **kwargs: Any) -> None:
         """Install update directly into custom_components from GitHub."""
         _LOGGER.info("Starting in-place update for AI Agent Pro...")
         raw_v = str(version or self._attr_latest_version or VERSION).strip().lstrip("v")
@@ -148,8 +168,10 @@ class AIAgentUpdateEntity(UpdateEntity):
                     rel_path = member[idx:]
                     target_file = os.path.join(dest_dir, rel_path)
                     os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                    with zf.open(member) as src, open(target_file, "wb") as dst:
+                    tmp_file = f"{target_file}.tmp"
+                    with zf.open(member) as src, open(tmp_file, "wb") as dst:
                         dst.write(src.read())
+                    os.replace(tmp_file, target_file)
                     extracted_count += 1
 
             if extracted_count == 0:
@@ -161,8 +183,10 @@ class AIAgentUpdateEntity(UpdateEntity):
                             rel_path = member[len(root_prefix):]
                             target_file = os.path.join(dest_dir, rel_path)
                             os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                            with zf.open(member) as src, open(target_file, "wb") as dst:
+                            tmp_file = f"{target_file}.tmp"
+                            with zf.open(member) as src, open(tmp_file, "wb") as dst:
                                 dst.write(src.read())
+                            os.replace(tmp_file, target_file)
                             extracted_count += 1
 
             _LOGGER.info("Extracted %d files to %s", extracted_count, dest_dir)
@@ -186,7 +210,7 @@ class AIAgentUpdateEntity(UpdateEntity):
         persistent_notification.async_create(
             self.hass,
             f"**AI Agent Pro שודרג בהצלחה לגרסה v{raw_v}!** 🎉\n\n"
-            f"הקבצים הוטמעו בהצלחה. יש להפעיל מחדש את Home Assistant (הגדרות ➔ מערכת ➔ הפעלה מחדש) כדי להפעיל את הקוד החדש.",
+            f"כל הקבצים עודכנו בהצלחה. יש להפעיל מחדש את Home Assistant (הגדרות ➔ מערכת ➔ הפעלה מחדש) כדי להחיל את השינויים במלואם.",
             title=f"AI Agent Pro עודכן ל-v{raw_v}",
             notification_id="ai_agent_update_success",
         )
