@@ -35,14 +35,73 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.CONVERSATION, Platform.UPDATE]
 
 
-async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up the integration via YAML (registers static paths, sidebar panel & websocket)."""
-    hass.data.setdefault(DOMAIN, {})
+import shutil
+from aiohttp import web
+from homeassistant.components.http import HomeAssistantView
+
+class AIAgentBrandView(HomeAssistantView):
+    """Serve AI Agent Pro brand assets directly with 100% guarantee."""
+
+    url = "/api/brands/integration/ai_agent/{image}"
+    name = "api:brands:integration:ai_agent"
+    requires_auth = False
+
+    async def get(self, request: web.Request, image: str) -> web.Response:
+        brand_dir = Path(__file__).parent / "brand"
+        www_dir = Path(__file__).parent / "www"
+        file_path = brand_dir / image
+        if not file_path.is_file():
+            if "logo" in image:
+                file_path = brand_dir / "logo.png"
+            elif "icon" in image:
+                file_path = brand_dir / "icon.png"
+            if not file_path.is_file():
+                file_path = www_dir / "icon.png"
+
+        if file_path.is_file():
+            data = await request.app["hass"].async_add_executor_job(file_path.read_bytes)
+            return web.Response(
+                body=data,
+                content_type="image/png",
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+        return web.Response(status=404)
+
+
+async def async_setup_common(hass: HomeAssistant) -> None:
+    """Ensure brand view, static paths, panel, and websocket API are registered once."""
+    if hass.data.get(f"{DOMAIN}_common_registered"):
+        return
+    hass.data[f"{DOMAIN}_common_registered"] = True
+
+    # Register custom brand view to intercept all brand image calls
+    try:
+        hass.http.register_view(AIAgentBrandView)
+        _LOGGER.info("Registered AIAgentBrandView for /api/brands/integration/ai_agent/{image}")
+    except Exception as err:
+        _LOGGER.debug("Could not register AIAgentBrandView: %s", err)
+
+    # Clear stale brand 404 cache in HA
+    try:
+        cache_dir = Path(hass.config.cache_path("brands"))
+        for p in [
+            cache_dir / "integrations" / "ai_agent",
+            cache_dir / "brands" / "ai_agent",
+        ]:
+            if p.exists():
+                shutil.rmtree(p, ignore_errors=True)
+    except Exception:
+        pass
 
     # Register static path for custom card, panel and brand icon
     www_dir = Path(__file__).parent / "www"
+    brand_dir = Path(__file__).parent / "brand"
     js_file = www_dir / "ai-agent-panel.js"
     icon_file = www_dir / "icon.png"
+    logo_file = brand_dir / "logo.png"
 
     if hasattr(hass.http, "async_register_static_paths") and StaticPathConfig is not None:
         paths = []
@@ -50,8 +109,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             paths.append(StaticPathConfig(url_path="/ai_agent_panel/ai-agent-panel.js", path=str(js_file), cache_headers=False))
         if icon_file.exists():
             paths.append(StaticPathConfig(url_path="/ai_agent_panel/icon.png", path=str(icon_file), cache_headers=True))
-            paths.append(StaticPathConfig(url_path="/api/brands/integration/ai_agent/icon.png", path=str(icon_file), cache_headers=True))
-            paths.append(StaticPathConfig(url_path="/api/brands/integration/ai_agent/logo.png", path=str(icon_file), cache_headers=True))
+        if logo_file.exists():
+            paths.append(StaticPathConfig(url_path="/ai_agent_panel/logo.png", path=str(logo_file), cache_headers=True))
         if paths:
             await hass.http.async_register_static_paths(paths)
             _LOGGER.info("Registered AI Agent static paths via async_register_static_paths")
@@ -60,7 +119,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             hass.http.register_static_path("/ai_agent_panel/ai-agent-panel.js", str(js_file), cache_headers=False)
         if icon_file.exists():
             hass.http.register_static_path("/ai_agent_panel/icon.png", str(icon_file), cache_headers=True)
-            hass.http.register_static_path("/api/brands/integration/ai_agent/icon.png", str(icon_file), cache_headers=True)
+        if logo_file.exists():
+            hass.http.register_static_path("/ai_agent_panel/logo.png", str(logo_file), cache_headers=True)
         _LOGGER.info("Registered AI Agent static paths via register_static_path")
 
     async_setup_websocket_api(hass)
@@ -86,11 +146,18 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     except Exception as err:
         _LOGGER.warning("Could not register sidebar panel or extra JS url: %s", err)
 
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Set up the integration via YAML."""
+    hass.data.setdefault(DOMAIN, {})
+    await async_setup_common(hass)
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up from a config entry with robust multi-source synchronization."""
+    hass.data.setdefault(DOMAIN, {})
+    await async_setup_common(hass)
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     stored_data = await store.async_load()
 

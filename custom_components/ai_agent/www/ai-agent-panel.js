@@ -89,22 +89,32 @@ class AIAgentPanel extends HTMLElement {
 
   async saveSettings() {
     if (!this._hass) return;
+    const payload = {
+      type: 'ai_agent/save_settings',
+      agent_role: this.settings.agent_role,
+      provider: this.settings.provider,
+      model: this.settings.model,
+      thinking_level: this.settings.thinking_level,
+      api_key: this.settings.api_key || '',
+      base_url: this.settings.base_url || '',
+      require_approval: this.settings.require_approval !== false,
+    };
+    const doSave = async () => {
+      await this._hass.callWS(payload);
+    };
     try {
-      await this._hass.callWS({
-        type: 'ai_agent/save_settings',
-        agent_role: this.settings.agent_role,
-        provider: this.settings.provider,
-        model: this.settings.model,
-        thinking_level: this.settings.thinking_level,
-        api_key: this.settings.api_key || '',
-        base_url: this.settings.base_url || '',
-        require_approval: this.settings.require_approval !== false,
-      });
+      try {
+        await doSave();
+      } catch (firstErr) {
+        // HA may reload the entry after save — wait and retry once
+        await new Promise((r) => setTimeout(r, 900));
+        await doSave();
+      }
       this.showToast('✅ ההגדרות עודכנו בהצלחה!');
       this.isDrawerOpen = false;
       this.render();
     } catch (e) {
-      this.showToast('❌ שגיאה בשמירת הגדרות: ' + e.message);
+      this.showToast('⚠️ שגיאה בשמירה: ' + (e.message || e));
     }
   }
 
@@ -379,6 +389,25 @@ class AIAgentPanel extends HTMLElement {
     }, 50);
   }
 
+  _saveScrollPositions() {
+    const chatEl = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
+    return {
+      host: this.scrollTop || 0,
+      chat: chatEl ? chatEl.scrollTop : null,
+      chatHeight: chatEl ? chatEl.scrollHeight : null,
+    };
+  }
+
+  _restoreScrollPositions(saved) {
+    requestAnimationFrame(() => {
+      if (saved.host) this.scrollTop = saved.host;
+      const chatEl = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
+      if (chatEl && saved.chat !== null) {
+        chatEl.scrollTop = saved.chat;
+      }
+    });
+  }
+
   connectedCallback() {
     this.chatHistory = this.loadChatHistory();
     this.render();
@@ -389,9 +418,7 @@ class AIAgentPanel extends HTMLElement {
     const s = this.settings;
     const isFreeMode = !s.api_key;
 
-    const prevHostScroll = this.scrollTop;
-    const chatScrollBefore = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
-    const prevChatScroll = (preserveScroll && chatScrollBefore) ? chatScrollBefore.scrollTop : null;
+    const saved = preserveScroll ? this._saveScrollPositions() : null;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -1188,6 +1215,38 @@ class AIAgentPanel extends HTMLElement {
           transform: translateX(-50%) translateY(0);
         }
 
+        /* Scroll-to-bottom floating button */
+        .scroll-to-bottom-btn {
+          position: absolute;
+          bottom: 80px;
+          right: 20px;
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: rgba(10, 132, 255, 0.85);
+          border: 1px solid rgba(10, 132, 255, 0.5);
+          color: #ffffff;
+          font-size: 18px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 4px 16px rgba(10, 132, 255, 0.45);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.25s ease, transform 0.2s ease;
+          z-index: 30;
+          outline: none;
+        }
+        .scroll-to-bottom-btn.visible {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        .scroll-to-bottom-btn:hover {
+          transform: scale(1.1);
+          background: #0a84ff;
+        }
+
         @keyframes slideUp {
           from { opacity: 0; transform: translateY(30px); }
           to { opacity: 1; transform: translateY(0); }
@@ -1429,7 +1488,7 @@ class AIAgentPanel extends HTMLElement {
           <!-- Chat Input Bar with the "+" Button -->
           <div class="chat-input-bar">
             <!-- The "+" Button -->
-            <button class="pro-plus-btn ${this.isDrawerOpen ? 'active' : ''}" id="plus-btn" title="פתח הגדרות ספק, מודל וחשיבה">
+            <button type="button" class="pro-plus-btn ${this.isDrawerOpen ? 'active' : ''}" id="plus-btn" title="פתח הגדרות ספק, מודל וחשיבה">
               +
             </button>
 
@@ -1437,37 +1496,55 @@ class AIAgentPanel extends HTMLElement {
             <input type="text" class="chat-input" id="chat-input" placeholder="כתוב הוראה לסוכן (למשל: 'בדוק שגיאות בלוגים', 'צור אוטומציה לכיבוי הדוד')..." />
 
             <!-- Send Button -->
-            <button class="send-btn" id="send-btn">↑</button>
+            <button type="button" class="send-btn" id="send-btn">↑</button>
           </div>
+
+          <!-- Scroll-to-bottom floating button -->
+          <button type="button" class="scroll-to-bottom-btn" id="scroll-to-bottom-btn" title="גלול לתחתית השיחה">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="8 12 12 16 16 12"/>
+              <line x1="12" y1="8" x2="12" y2="16"/>
+            </svg>
+          </button>
         </div>
       </div>
     `;
 
     this.attachEventListeners();
+    if (saved) this._restoreScrollPositions(saved);
   }
 
   attachEventListeners() {
     const root = this.shadowRoot;
 
-    // Toggle Drawer via "+" Button or Status Pill
+    // Toggle Drawer — directly manipulate DOM class to avoid full re-render and scroll jump
     const plusBtn = root.querySelector('#plus-btn');
     const statusPillBtn = root.querySelector('#status-pill-btn');
     const closeDrawerBtn = root.querySelector('#close-drawer-btn');
+    const drawer = root.querySelector('#drawer');
 
     const toggleDrawer = () => {
       this.isDrawerOpen = !this.isDrawerOpen;
-      this.render();
+      if (drawer) {
+        drawer.classList.toggle('open', this.isDrawerOpen);
+      }
+      if (plusBtn) {
+        plusBtn.classList.toggle('active', this.isDrawerOpen);
+      }
     };
 
-    if (plusBtn) plusBtn.onclick = toggleDrawer;
-    if (statusPillBtn) statusPillBtn.onclick = toggleDrawer;
-    if (closeDrawerBtn) closeDrawerBtn.onclick = toggleDrawer;
+    if (plusBtn) plusBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
+    if (statusPillBtn) statusPillBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
+    if (closeDrawerBtn) closeDrawerBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
 
     // Thinking Pills
     root.querySelectorAll('.thinking-pill').forEach((pill) => {
       pill.onclick = () => {
         this.settings.thinking_level = pill.getAttribute('data-level');
-        this.render();
+        // Update pill visuals directly, no full re-render
+        root.querySelectorAll('.thinking-pill').forEach((p) => p.classList.remove('active'));
+        pill.classList.add('active');
       };
     });
 
@@ -1480,6 +1557,9 @@ class AIAgentPanel extends HTMLElement {
         this.settings.model = root.querySelector('#model-input').value.trim();
         const key = root.querySelector('#api-key-input').value.trim();
         this.settings.api_key = key;
+        // Read thinking_level from active pill (may have been changed without re-render)
+        const activePill = root.querySelector('.thinking-pill.active');
+        if (activePill) this.settings.thinking_level = activePill.getAttribute('data-level');
         this.saveSettings();
       };
     }
@@ -1525,11 +1605,12 @@ class AIAgentPanel extends HTMLElement {
 
     // Edit Message Buttons
     root.querySelectorAll('[data-edit-index]').forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = (e) => {
+        e.preventDefault();
         this.editingIndex = parseInt(btn.getAttribute('data-edit-index'), 10);
         this.render();
         setTimeout(() => {
-          const ta = root.querySelector(`#edit-textarea-${this.editingIndex}`);
+          const ta = this.shadowRoot.querySelector(`#edit-textarea-${this.editingIndex}`);
           if (ta) {
             ta.focus();
             ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -1540,7 +1621,8 @@ class AIAgentPanel extends HTMLElement {
 
     // Cancel Edit Buttons
     root.querySelectorAll('[data-cancel-edit]').forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = (e) => {
+        e.preventDefault();
         this.editingIndex = null;
         this.render();
       };
@@ -1550,7 +1632,7 @@ class AIAgentPanel extends HTMLElement {
     root.querySelectorAll('[data-submit-edit]').forEach((btn) => {
       btn.onclick = () => {
         const idx = parseInt(btn.getAttribute('data-submit-edit'), 10);
-        const ta = root.querySelector(`#edit-textarea-${idx}`);
+        const ta = this.shadowRoot.querySelector(`#edit-textarea-${idx}`);
         if (ta && ta.value.trim()) {
           this.editAndResendMessage(idx, ta.value.trim());
         }
@@ -1602,15 +1684,19 @@ class AIAgentPanel extends HTMLElement {
       };
     });
 
-    // Restore scroll positions so editing or cancelling never jumps to the top
-    if (prevChatScroll !== null) {
-      const newChat = root.querySelector('#chat-scroll');
-      if (newChat) {
-        newChat.scrollTop = prevChatScroll;
-      }
-    }
-    if (prevHostScroll) {
-      this.scrollTop = prevHostScroll;
+    // Scroll-to-bottom button
+    const scrollToBottomBtn = root.querySelector('#scroll-to-bottom-btn');
+    const chatScrollEl = root.querySelector('#chat-scroll');
+    if (chatScrollEl && scrollToBottomBtn) {
+      const updateScrollBtn = () => {
+        const distFromBottom = chatScrollEl.scrollHeight - chatScrollEl.scrollTop - chatScrollEl.clientHeight;
+        scrollToBottomBtn.classList.toggle('visible', distFromBottom > 120);
+      };
+      chatScrollEl.addEventListener('scroll', updateScrollBtn, { passive: true });
+      updateScrollBtn();
+      scrollToBottomBtn.onclick = () => {
+        chatScrollEl.scrollTo({ top: chatScrollEl.scrollHeight, behavior: 'smooth' });
+      };
     }
   }
 }
