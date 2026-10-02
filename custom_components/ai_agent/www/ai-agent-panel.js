@@ -226,7 +226,7 @@ class AIAgentPanel extends HTMLElement {
     // Step 1: Extract code blocks (```lang ... ```)
     const codeBlocks = [];
     let processed = String(text).replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
-      const id = `___CODEBLOCK_${codeBlocks.length}___`;
+      const id = `%%CODEBLOCK_${codeBlocks.length}%%`;
       codeBlocks.push({ lang: lang || 'code', code: code.replace(/^\n+|\n+$/g, '') });
       return id;
     });
@@ -240,7 +240,7 @@ class AIAgentPanel extends HTMLElement {
     // Step 3: Extract inline code (`code`)
     const inlineCodes = [];
     processed = processed.replace(/`([^`\n]+)`/g, (match, code) => {
-      const id = `___INLINECODE_${inlineCodes.length}___`;
+      const id = `%%INLINECODE_${inlineCodes.length}%%`;
       inlineCodes.push(code);
       return id;
     });
@@ -316,7 +316,7 @@ class AIAgentPanel extends HTMLElement {
         t.startsWith('<ul') ||
         t.startsWith('<blockquote') ||
         t.startsWith('<hr') ||
-        t.startsWith('___CODEBLOCK_')
+        t.startsWith('%%CODEBLOCK_')
       ) {
         return t;
       }
@@ -327,7 +327,7 @@ class AIAgentPanel extends HTMLElement {
     let result = finalHtml;
     inlineCodes.forEach((code, i) => {
       result = result.replace(
-        `___INLINECODE_${i}___`,
+        `%%INLINECODE_${i}%%`,
         `<code class="md-inline-code" dir="ltr">${code}</code>`
       );
     });
@@ -353,7 +353,7 @@ class AIAgentPanel extends HTMLElement {
           <pre class="md-pre"><code>${escaped}</code></pre>
         </div>
       `;
-      result = result.replace(`___CODEBLOCK_${i}___`, blockMarkup);
+      result = result.replace(`%%CODEBLOCK_${i}%%`, blockMarkup);
     });
 
     this._lastCodeBlocks = codeBlocks;
@@ -600,22 +600,22 @@ class AIAgentPanel extends HTMLElement {
           background: rgba(255, 255, 255, 0.08);
           border: 1px solid rgba(255, 255, 255, 0.16);
           color: #d1d1d6;
-          border-radius: 980px;
-          padding: 4px 11px;
-          font-size: 11.5px;
-          font-weight: 500;
+          border-radius: 50%;
+          width: 28px;
+          height: 28px;
+          padding: 0;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
-          gap: 5px;
+          justify-content: center;
           transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           outline: none;
         }
         .msg-action-btn:hover {
-          background: rgba(10, 132, 255, 0.22);
+          background: rgba(10, 132, 255, 0.25);
           color: #64d2ff;
           border-color: #0a84ff;
-          transform: translateY(-1px);
+          transform: scale(1.12);
         }
 
         /* Inline Edit Box */
@@ -1270,11 +1270,10 @@ class AIAgentPanel extends HTMLElement {
                       <div class="user-msg-text">${this.escapeHtml(msg.content)}</div>
                     </div>
                     <div class="msg-hover-actions">
-                      <button class="msg-action-btn" data-edit-index="${index}" title="לחץ לעריכת ההודעה ושליחה מחדש">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <button class="msg-action-btn" data-edit-index="${index}" title="ערוך הודעה">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                         </svg>
-                        <span>ערוך שורה</span>
                       </button>
                     </div>
                   </div>
