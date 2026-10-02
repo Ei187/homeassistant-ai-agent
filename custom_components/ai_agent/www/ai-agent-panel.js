@@ -445,7 +445,6 @@ class AIAgentPanel extends HTMLElement {
         }
       } else {
         html += `<div class="message-bubble message-assistant">
-          ${msg.fallbackNotice ? `<div class="fallback-banner"><span>⚠️</span><span>${msg.fallbackNotice}</span></div>` : ''}
           <div class="markdown-body">${this.renderMarkdown(msg.content)}</div>
           ${msg.proposals && msg.proposals.length > 0 ? msg.proposals.map((p) => `
             <div class="proposal-card">
