@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -157,4 +157,5 @@ DEFAULT_SETTINGS = {
     CONF_NOTIFY_MOBILE: True,
     CONF_MOBILE_NOTIFY_SERVICE: "notify.notify",
 }
+
 

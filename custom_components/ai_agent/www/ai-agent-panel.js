@@ -389,22 +389,181 @@ class AIAgentPanel extends HTMLElement {
     }, 50);
   }
 
-  _saveScrollPositions() {
-    const chatEl = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
-    return {
-      host: this.scrollTop || 0,
-      chat: chatEl ? chatEl.scrollTop : null,
-      chatHeight: chatEl ? chatEl.scrollHeight : null,
-    };
+  // Build just the messages HTML (used by renderMessages)
+  _buildMessagesHTML() {
+    const s = this.settings;
+    const isFreeMode = !s.api_key;
+    let html = '';
+
+    if (this.chatHistory.length === 0) {
+      html += `<div style="text-align:center;margin:auto;max-width:440px;">
+        <div style="font-size:48px;margin-bottom:12px;">✨</div>
+        <div style="font-size:18px;font-weight:600;margin-bottom:6px;">שלום! אני סוכן ה-AI שלך בבית</div>
+        <div style="font-size:13.5px;color:#86868b;line-height:1.55;">
+          ${isFreeMode
+            ? `אתה פועל כרגע ב<b>מצב חינמי</b> ללא צורך במפתח API!<br/>
+               אפשר לבקש ממני לסרוק שגיאות, לבנות אוטומציות או לשלוט במכשירים.<br/>
+               רוצה מודל ספציפי? לחץ על <b>+</b> למטה והזן מפתח API.`
+            : `מחובר לספק <b>${s.provider}</b> עם מודל <b>${s.model}</b>.<br/>מה תרצה שנעשה בבית היום?`}
+        </div>
+      </div>`;
+    }
+
+    this.chatHistory.forEach((msg, index) => {
+      if (msg.role === 'user') {
+        if (this.editingIndex === index) {
+          html += `<div class="message-user-wrapper">
+            <div class="msg-edit-box">
+              <div class="msg-edit-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>עריכת הודעה</span>
+                <span style="margin-right:auto;font-size:11px;opacity:0.6;">Esc לביטול</span>
+              </div>
+              <textarea class="msg-edit-textarea" id="edit-textarea-${index}">${this.escapeForTextarea(msg.content)}</textarea>
+              <div class="msg-edit-buttons">
+                <button type="button" class="msg-edit-cancel" data-cancel-edit="${index}">ביטול</button>
+                <button type="button" class="msg-edit-save" data-submit-edit="${index}">שמור ושלח שוב ↑</button>
+              </div>
+            </div>
+          </div>`;
+        } else {
+          html += `<div class="message-user-wrapper">
+            <div class="message-bubble message-user">
+              <div class="user-msg-text">${this.escapeHtml(msg.content)}</div>
+            </div>
+            <div class="msg-hover-actions">
+              <button type="button" class="msg-action-btn" data-edit-index="${index}" title="ערוך הודעה">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                </svg>
+              </button>
+            </div>
+          </div>`;
+        }
+      } else {
+        html += `<div class="message-bubble message-assistant">
+          ${msg.fallbackNotice ? `<div class="fallback-banner"><span>⚠️</span><span>${msg.fallbackNotice}</span></div>` : ''}
+          <div class="markdown-body">${this.renderMarkdown(msg.content)}</div>
+          ${msg.proposals && msg.proposals.length > 0 ? msg.proposals.map((p) => `
+            <div class="proposal-card">
+              <div class="proposal-header">
+                <div class="proposal-title">⚡ ${p.title}</div>
+                <span style="font-size:11px;color:#ff9f0a;font-weight:600;">ממתין לאישור</span>
+              </div>
+              <div class="yaml-block">${p.yaml_preview}</div>
+              <div class="proposal-buttons">
+                <button type="button" class="pro-pill-btn btn-approve" data-approve="${p.id}">✅ אשר והטמע</button>
+                <button type="button" class="pro-pill-btn btn-reject" data-reject="${p.id}">❌ דחה</button>
+              </div>
+            </div>`).join('') : ''}
+        </div>`;
+      }
+    });
+
+    if (this.isLoading) {
+      html += `<div class="message-bubble message-assistant" style="display:flex;gap:8px;align-items:center;">
+        <span>חשיבה ועיבוד נתונים...</span>
+        <span style="font-size:16px;animation:spin 1s infinite linear;">⚙️</span>
+      </div>`;
+    }
+    return html;
   }
 
-  _restoreScrollPositions(saved) {
-    requestAnimationFrame(() => {
-      if (saved.host) this.scrollTop = saved.host;
-      const chatEl = this.shadowRoot ? this.shadowRoot.querySelector('#chat-scroll') : null;
-      if (chatEl && saved.chat !== null) {
-        chatEl.scrollTop = saved.chat;
+  // Update ONLY the messages area — no full DOM replace, no scroll jump
+  renderMessages() {
+    const root = this.shadowRoot;
+    const chatScroll = root && root.querySelector('#chat-scroll');
+    if (!chatScroll) { this._rendered = false; this.render(); return; }
+
+    const savedScroll = chatScroll.scrollTop;
+    chatScroll.innerHTML = this._buildMessagesHTML();
+    chatScroll.scrollTop = savedScroll; // Restore synchronously
+
+    // Update scroll-to-bottom button visibility
+    const stbBtn = root.querySelector('#scroll-to-bottom-btn');
+    if (stbBtn) {
+      const dist = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
+      stbBtn.classList.toggle('visible', dist > 120);
+    }
+
+    // Reattach message-area listeners
+    this._attachMsgListeners();
+  }
+
+  _attachMsgListeners() {
+    const root = this.shadowRoot;
+    if (!root) return;
+
+    root.querySelectorAll('[data-edit-index]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        this.editingIndex = parseInt(btn.getAttribute('data-edit-index'), 10);
+        this.renderMessages();
+        setTimeout(() => {
+          const ta = root.querySelector(`#edit-textarea-${this.editingIndex}`);
+          if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+        }, 40);
+      };
+    });
+
+    root.querySelectorAll('[data-cancel-edit]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        this.editingIndex = null;
+        this.renderMessages();
+      };
+    });
+
+    root.querySelectorAll('[data-submit-edit]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-submit-edit'), 10);
+        const ta = root.querySelector(`#edit-textarea-${idx}`);
+        if (ta && ta.value.trim()) this.editAndResendMessage(idx, ta.value.trim());
+      };
+    });
+
+    if (this.editingIndex !== null) {
+      const ta = root.querySelector(`#edit-textarea-${this.editingIndex}`);
+      if (ta) {
+        ta.onkeydown = (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (ta.value.trim()) this.editAndResendMessage(this.editingIndex, ta.value.trim());
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.editingIndex = null;
+            this.renderMessages();
+          }
+        };
       }
+    }
+
+    root.querySelectorAll('[data-approve]').forEach((btn) => {
+      btn.onclick = () => this.resolveAction(btn.getAttribute('data-approve'), true);
+    });
+    root.querySelectorAll('[data-reject]').forEach((btn) => {
+      btn.onclick = () => this.resolveAction(btn.getAttribute('data-reject'), false);
+    });
+
+    root.querySelectorAll('.md-copy-btn').forEach((btn) => {
+      btn.onclick = async () => {
+        const idx = parseInt(btn.getAttribute('data-copy-idx'), 10);
+        if (this._lastCodeBlocks && this._lastCodeBlocks[idx]) {
+          try {
+            await navigator.clipboard.writeText(this._lastCodeBlocks[idx].code);
+            const sp = btn.querySelector('span');
+            if (sp) {
+              const o = sp.textContent; sp.textContent = 'הועתק! ✓';
+              btn.style.borderColor = '#30d158'; btn.style.color = '#30d158';
+              setTimeout(() => { sp.textContent = o; btn.style.borderColor = ''; btn.style.color = ''; }, 2000);
+            }
+          } catch (err) { console.warn('copy failed', err); }
+        }
+      };
     });
   }
 
@@ -418,7 +577,12 @@ class AIAgentPanel extends HTMLElement {
     const s = this.settings;
     const isFreeMode = !s.api_key;
 
-    const saved = preserveScroll ? this._saveScrollPositions() : null;
+    // After first full render, only update the messages section to avoid scroll jump
+    if (this._rendered && this.shadowRoot && this.shadowRoot.querySelector('#chat-scroll')) {
+      this.renderMessages();
+      return;
+    }
+    this._rendered = true;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -1286,108 +1450,11 @@ class AIAgentPanel extends HTMLElement {
 
         <!-- Chat Container -->
         <div class="chat-container">
-          <!-- Scrollable Chat -->
-          <div class="chat-scroll" id="chat-scroll">
-            ${this.chatHistory.length === 0 ? `
-              <div style="text-align: center; margin: auto; max-width: 440px;">
-                <div style="font-size: 48px; margin-bottom: 12px;">✨</div>
-                <div style="font-size: 18px; font-weight: 600; margin-bottom: 6px;">שלום! אני סוכן ה-AI שלך בבית</div>
-                <div style="font-size: 13.5px; color: #86868b; line-height: 1.55;">
-                  ${isFreeMode ? `
-                    אתה פועל כרגע ב<b>מצב חינמי</b> ללא צורך במפתח API!<br/>
-                    אפשר לבקש ממני לסרוק שגיאות, לבנות אוטומציות או לשלוט במכשירים.<br/>
-                    רוצה מודל ספציפי כמו <b>gpt-6-astra</b>? לחץ על כפתור ה-<b>+</b> למטה והזן מפתח API.
-                  ` : `
-                    מחובר לספק <b>${s.provider}</b> עם מודל <b>${s.model}</b> ברמת חשיבה <b>${s.thinking_level.toUpperCase()}</b>.<br/>
-                    מה תרצה שנעשה בבית היום?
-                  `}
-                </div>
-              </div>
-            ` : ''}
-
-            ${this.chatHistory.map((msg, index) => {
-              if (msg.role === 'user') {
-                const isEditing = this.editingIndex === index;
-                if (isEditing) {
-                  return `
-                    <div class="message-user-wrapper">
-                      <div class="msg-edit-box">
-                        <div class="msg-edit-title">
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                          </svg>
-                          <span>עריכת הודעה ותיקון שגיאות</span>
-                          <span style="margin-right: auto; font-size: 11px; opacity: 0.6;">Esc לביטול</span>
-                        </div>
-                        <textarea class="msg-edit-textarea" id="edit-textarea-${index}">${this.escapeForTextarea(msg.content)}</textarea>
-                        <div class="msg-edit-buttons">
-                          <button class="msg-edit-cancel" data-cancel-edit="${index}">ביטול</button>
-                          <button class="msg-edit-save" data-submit-edit="${index}">שמור ושלח שוב ↑</button>
-                        </div>
-                      </div>
-                    </div>
-                  `;
-                }
-
-                return `
-                  <div class="message-user-wrapper">
-                    <div class="message-bubble message-user">
-                      <div class="user-msg-text">${this.escapeHtml(msg.content)}</div>
-                    </div>
-                    <div class="msg-hover-actions">
-                      <button class="msg-action-btn" data-edit-index="${index}" title="ערוך הודעה">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                `;
-              }
-
-              // Assistant message
-              return `
-                <div class="message-bubble message-assistant">
-                  ${msg.fallbackNotice ? `
-                    <div class="fallback-banner">
-                      <span>⚠️</span>
-                      <span>${msg.fallbackNotice}</span>
-                    </div>
-                  ` : ''}
-                  <div class="markdown-body">${this.renderMarkdown(msg.content)}</div>
-
-                  ${msg.proposals && msg.proposals.length > 0 ? msg.proposals.map((p) => `
-                    <div class="proposal-card">
-                      <div class="proposal-header">
-                        <div class="proposal-title">⚡ ${p.title}</div>
-                        <span style="font-size: 11px; color: #ff9f0a; font-weight: 600;">ממתין לאישור</span>
-                      </div>
-                      <div class="yaml-block">${p.yaml_preview}</div>
-                      <div class="proposal-buttons">
-                        <button class="pro-pill-btn btn-approve" data-approve="${p.id}">
-                          ✅ אשר והטמע במערכת
-                        </button>
-                        <button class="pro-pill-btn btn-reject" data-reject="${p.id}">
-                          ❌ דחה ובטל
-                        </button>
-                      </div>
-                    </div>
-                  `).join('') : ''}
-                </div>
-              `;
-            }).join('')}
-
-            ${this.isLoading ? `
-              <div class="message-bubble message-assistant" style="display: flex; gap: 8px; align-items: center;">
-                <span>חשיבה ועיבוד נתונים...</span>
-                <span style="font-size: 16px; animation: spin 1s infinite linear;">⚙️</span>
-              </div>
-            ` : ''}
-          </div>
+          <!-- Scrollable Chat — filled dynamically by renderMessages() -->
+          <div class="chat-scroll" id="chat-scroll"></div>
 
           <!-- Slide-up Drawer: Opened by "+" or Status Pill -->
-          <div class="drawer-overlay" id="drawer">
+          <div class="drawer-overlay ${this.isDrawerOpen ? 'open' : ''}" id="drawer">
             <div class="drawer-header">
               <div class="drawer-title">
                 <span>➕</span>
@@ -1512,13 +1579,12 @@ class AIAgentPanel extends HTMLElement {
     `;
 
     this.attachEventListeners();
-    if (saved) this._restoreScrollPositions(saved);
   }
 
   attachEventListeners() {
     const root = this.shadowRoot;
 
-    // Toggle Drawer — directly manipulate DOM class to avoid full re-render and scroll jump
+    // Toggle Drawer — manipulate DOM class directly, no full re-render
     const plusBtn = root.querySelector('#plus-btn');
     const statusPillBtn = root.querySelector('#status-pill-btn');
     const closeDrawerBtn = root.querySelector('#close-drawer-btn');
@@ -1526,23 +1592,18 @@ class AIAgentPanel extends HTMLElement {
 
     const toggleDrawer = () => {
       this.isDrawerOpen = !this.isDrawerOpen;
-      if (drawer) {
-        drawer.classList.toggle('open', this.isDrawerOpen);
-      }
-      if (plusBtn) {
-        plusBtn.classList.toggle('active', this.isDrawerOpen);
-      }
+      if (drawer) drawer.classList.toggle('open', this.isDrawerOpen);
+      if (plusBtn) plusBtn.classList.toggle('active', this.isDrawerOpen);
     };
 
-    if (plusBtn) plusBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
-    if (statusPillBtn) statusPillBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
-    if (closeDrawerBtn) closeDrawerBtn.onclick = (e) => { e.preventDefault(); toggleDrawer(); };
+    if (plusBtn) plusBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
+    if (statusPillBtn) statusPillBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
+    if (closeDrawerBtn) closeDrawerBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
 
-    // Thinking Pills
+    // Thinking Pills — toggle class directly, no re-render
     root.querySelectorAll('.thinking-pill').forEach((pill) => {
       pill.onclick = () => {
         this.settings.thinking_level = pill.getAttribute('data-level');
-        // Update pill visuals directly, no full re-render
         root.querySelectorAll('.thinking-pill').forEach((p) => p.classList.remove('active'));
         pill.classList.add('active');
       };
@@ -1555,9 +1616,7 @@ class AIAgentPanel extends HTMLElement {
         this.settings.agent_role = root.querySelector('#agent-role-select').value;
         this.settings.provider = root.querySelector('#provider-select').value;
         this.settings.model = root.querySelector('#model-input').value.trim();
-        const key = root.querySelector('#api-key-input').value.trim();
-        this.settings.api_key = key;
-        // Read thinking_level from active pill (may have been changed without re-render)
+        this.settings.api_key = root.querySelector('#api-key-input').value.trim();
         const activePill = root.querySelector('.thinking-pill.active');
         if (activePill) this.settings.thinking_level = activePill.getAttribute('data-level');
         this.saveSettings();
@@ -1574,130 +1633,26 @@ class AIAgentPanel extends HTMLElement {
         this.sendMessage(val);
       }
     };
-
     if (sendBtn) sendBtn.onclick = handleSend;
-    if (chatInput) {
-      chatInput.onkeydown = (e) => {
-        if (e.key === 'Enter') handleSend();
-      };
-    }
+    if (chatInput) chatInput.onkeydown = (e) => { if (e.key === 'Enter') handleSend(); };
 
-    // Start New Chat Button
+    // New Chat
     const newChatBtn = root.querySelector('#new-chat-btn');
-    if (newChatBtn) {
-      newChatBtn.onclick = () => this.startNewChat();
-    }
-
-    // Approve / Reject buttons inside chat
-    root.querySelectorAll('[data-approve]').forEach((btn) => {
-      btn.onclick = () => {
-        const id = btn.getAttribute('data-approve');
-        this.resolveAction(id, true);
-      };
-    });
-
-    root.querySelectorAll('[data-reject]').forEach((btn) => {
-      btn.onclick = () => {
-        const id = btn.getAttribute('data-reject');
-        this.resolveAction(id, false);
-      };
-    });
-
-    // Edit Message Buttons
-    root.querySelectorAll('[data-edit-index]').forEach((btn) => {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        this.editingIndex = parseInt(btn.getAttribute('data-edit-index'), 10);
-        this.render();
-        setTimeout(() => {
-          const ta = this.shadowRoot.querySelector(`#edit-textarea-${this.editingIndex}`);
-          if (ta) {
-            ta.focus();
-            ta.setSelectionRange(ta.value.length, ta.value.length);
-          }
-        }, 40);
-      };
-    });
-
-    // Cancel Edit Buttons
-    root.querySelectorAll('[data-cancel-edit]').forEach((btn) => {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        this.editingIndex = null;
-        this.render();
-      };
-    });
-
-    // Submit Edit Buttons
-    root.querySelectorAll('[data-submit-edit]').forEach((btn) => {
-      btn.onclick = () => {
-        const idx = parseInt(btn.getAttribute('data-submit-edit'), 10);
-        const ta = this.shadowRoot.querySelector(`#edit-textarea-${idx}`);
-        if (ta && ta.value.trim()) {
-          this.editAndResendMessage(idx, ta.value.trim());
-        }
-      };
-    });
-
-    // Edit Textarea Keyboard Handler (Enter = Save, Esc = Cancel)
-    if (this.editingIndex !== null) {
-      const ta = root.querySelector(`#edit-textarea-${this.editingIndex}`);
-      if (ta) {
-        ta.onkeydown = (e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            if (ta.value.trim()) {
-              this.editAndResendMessage(this.editingIndex, ta.value.trim());
-            }
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            this.editingIndex = null;
-            this.render();
-          }
-        };
-      }
-    }
-
-    // Code Block Copy Buttons
-    root.querySelectorAll('.md-copy-btn').forEach((btn) => {
-      btn.onclick = async () => {
-        const idx = parseInt(btn.getAttribute('data-copy-idx'), 10);
-        if (this._lastCodeBlocks && this._lastCodeBlocks[idx]) {
-          try {
-            await navigator.clipboard.writeText(this._lastCodeBlocks[idx].code);
-            const textSpan = btn.querySelector('span');
-            if (textSpan) {
-              const orig = textSpan.textContent;
-              textSpan.textContent = 'הועתק! ✓';
-              btn.style.borderColor = '#30d158';
-              btn.style.color = '#30d158';
-              setTimeout(() => {
-                textSpan.textContent = orig;
-                btn.style.borderColor = '';
-                btn.style.color = '';
-              }, 2000);
-            }
-          } catch (err) {
-            console.warn('Could not copy code', err);
-          }
-        }
-      };
-    });
+    if (newChatBtn) newChatBtn.onclick = () => this.startNewChat();
 
     // Scroll-to-bottom button
-    const scrollToBottomBtn = root.querySelector('#scroll-to-bottom-btn');
+    const stbBtn = root.querySelector('#scroll-to-bottom-btn');
     const chatScrollEl = root.querySelector('#chat-scroll');
-    if (chatScrollEl && scrollToBottomBtn) {
-      const updateScrollBtn = () => {
-        const distFromBottom = chatScrollEl.scrollHeight - chatScrollEl.scrollTop - chatScrollEl.clientHeight;
-        scrollToBottomBtn.classList.toggle('visible', distFromBottom > 120);
-      };
-      chatScrollEl.addEventListener('scroll', updateScrollBtn, { passive: true });
-      updateScrollBtn();
-      scrollToBottomBtn.onclick = () => {
-        chatScrollEl.scrollTo({ top: chatScrollEl.scrollHeight, behavior: 'smooth' });
-      };
+    if (chatScrollEl && stbBtn) {
+      chatScrollEl.addEventListener('scroll', () => {
+        const dist = chatScrollEl.scrollHeight - chatScrollEl.scrollTop - chatScrollEl.clientHeight;
+        stbBtn.classList.toggle('visible', dist > 120);
+      }, { passive: true });
+      stbBtn.onclick = () => chatScrollEl.scrollTo({ top: chatScrollEl.scrollHeight, behavior: 'smooth' });
     }
+
+    // Populate messages for the first time
+    this.renderMessages();
   }
 }
 
