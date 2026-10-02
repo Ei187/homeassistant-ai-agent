@@ -438,13 +438,14 @@ class AIAgentPanel extends HTMLElement {
           width: 44px;
           height: 44px;
           border-radius: 14px;
-          background: linear-gradient(135deg, #2c2c2e, #1c1c1e);
+          background: #000000;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 22px;
-          box-shadow: 0 8px 24px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.1);
-          border: 1px solid rgba(255,255,255,0.08);
+          overflow: hidden;
+          box-shadow: 0 4px 16px rgba(10, 132, 255, 0.35), 0 0 12px rgba(191, 90, 242, 0.4);
+          border: 1.5px solid rgba(191, 90, 242, 0.5);
+          flex-shrink: 0;
         }
         .title-text h1 {
           font-size: 20px;
@@ -1201,7 +1202,9 @@ class AIAgentPanel extends HTMLElement {
         <!-- Header -->
         <div class="pro-header">
           <div class="header-title">
-            <div class="pro-logo-badge">🤖</div>
+            <div class="pro-logo-badge">
+              <img src="/ai_agent_panel/icon.png" style="width: 100%; height: 100%; object-fit: cover;" alt="AI Agent Pro" />
+            </div>
             <div class="title-text">
               <h1>סוכן AI חכם ל-Home Assistant</h1>
               <p>שליטה מלאה, אוטומציות ותיקון תקלות</p>

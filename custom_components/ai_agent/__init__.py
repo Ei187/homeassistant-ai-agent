@@ -39,26 +39,29 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the integration via YAML (registers static paths, sidebar panel & websocket)."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Register static path for custom card and panel
+    # Register static path for custom card, panel and brand icon
     www_dir = Path(__file__).parent / "www"
     js_file = www_dir / "ai-agent-panel.js"
-    if js_file.exists():
-        if hasattr(hass.http, "async_register_static_paths") and StaticPathConfig is not None:
-            await hass.http.async_register_static_paths([
-                StaticPathConfig(
-                    url_path="/ai_agent_panel/ai-agent-panel.js",
-                    path=str(js_file),
-                    cache_headers=False,
-                )
-            ])
-            _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js via async_register_static_paths")
-        elif hasattr(hass.http, "register_static_path"):
-            hass.http.register_static_path(
-                "/ai_agent_panel/ai-agent-panel.js",
-                str(js_file),
-                cache_headers=False,
-            )
-            _LOGGER.info("Registered AI Agent frontend at /ai_agent_panel/ai-agent-panel.js via register_static_path")
+    icon_file = www_dir / "icon.png"
+
+    if hasattr(hass.http, "async_register_static_paths") and StaticPathConfig is not None:
+        paths = []
+        if js_file.exists():
+            paths.append(StaticPathConfig(url_path="/ai_agent_panel/ai-agent-panel.js", path=str(js_file), cache_headers=False))
+        if icon_file.exists():
+            paths.append(StaticPathConfig(url_path="/ai_agent_panel/icon.png", path=str(icon_file), cache_headers=True))
+            paths.append(StaticPathConfig(url_path="/api/brands/integration/ai_agent/icon.png", path=str(icon_file), cache_headers=True))
+            paths.append(StaticPathConfig(url_path="/api/brands/integration/ai_agent/logo.png", path=str(icon_file), cache_headers=True))
+        if paths:
+            await hass.http.async_register_static_paths(paths)
+            _LOGGER.info("Registered AI Agent static paths via async_register_static_paths")
+    elif hasattr(hass.http, "register_static_path"):
+        if js_file.exists():
+            hass.http.register_static_path("/ai_agent_panel/ai-agent-panel.js", str(js_file), cache_headers=False)
+        if icon_file.exists():
+            hass.http.register_static_path("/ai_agent_panel/icon.png", str(icon_file), cache_headers=True)
+            hass.http.register_static_path("/api/brands/integration/ai_agent/icon.png", str(icon_file), cache_headers=True)
+        _LOGGER.info("Registered AI Agent static paths via register_static_path")
 
     async_setup_websocket_api(hass)
 

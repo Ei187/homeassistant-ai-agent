@@ -62,8 +62,8 @@ class AIAgentUpdateEntity(UpdateEntity):
 
     @property
     def entity_picture(self) -> str | None:
-        """Override to None so Home Assistant uses the robot MDI icon instead of 404 brand image."""
-        return None
+        """Return the custom brand icon URL for AI Agent Pro."""
+        return f"/ai_agent_panel/icon.png?v={self._attr_installed_version}"
 
     @property
     def device_info(self) -> DeviceInfo:
