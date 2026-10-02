@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Ei187/homeassistant-ai-agent/main/icon.png" width="180" height="180" alt="AI Agent Pro Logo" style="border-radius: 28px;" />
+</p>
+
 # 🤖 AI Agent Pro for Home Assistant
 
 סוכן AI אוטונומי, מהיר ומאובטח ל-Home Assistant התומך בכל ספקי ה-AI בעולם, חיבור מודלי שפה עתידיים, שליטה מלאה בכל מכשירי הבית, ניתוח לוגים ויצירת אוטומציות במנגנון אישורים קפדני (Human-in-the-Loop).
