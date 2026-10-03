@@ -158,7 +158,6 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         user_raw = msg["message"]
         user_text = user_raw.lower()
         proposals = []
-        free_notice = "✨ **מצב מקומי חינמי:** פועל ללא צורך במפתח API. לחיבור מודלי שפה עמוקים (GPT-6, Claude 3.7, Gemini 2.5), לחץ על ה-`+` והדבק מפתח."
 
         is_question = (
             "?" in user_raw
@@ -333,7 +332,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             msg["id"],
             {
                 "reply": reply,
-                "fallback_notice": free_notice,
+                "fallback_notice": None,
                 "actual_thinking_level": "free",
                 "proposals": proposals,
             },

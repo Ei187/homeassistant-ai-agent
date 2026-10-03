@@ -32,7 +32,12 @@ class AIAgentPanel extends HTMLElement {
       const saved = localStorage.getItem('ai_agent_pro_chat_history');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          parsed.forEach((m) => {
+            delete m.fallbackNotice;
+          });
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn('Could not load chat history from localStorage', e);
@@ -184,7 +189,6 @@ class AIAgentPanel extends HTMLElement {
       this.chatHistory.push({
         role: 'assistant',
         content: res.reply || 'הפעולה עובדה בהצלחה.',
-        fallbackNotice: res.fallback_notice,
         proposals: res.proposals || [],
       });
       this.saveChatHistory();
@@ -1128,16 +1132,7 @@ class AIAgentPanel extends HTMLElement {
 
         /* Fallback Banner */
         .fallback-banner {
-          background: rgba(255, 159, 10, 0.15);
-          border: 1px solid rgba(255, 159, 10, 0.35);
-          color: #ff9f0a;
-          padding: 8px 12px;
-          border-radius: 10px;
-          margin-bottom: 10px;
-          font-size: 12.5px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
+          display: none !important;
         }
 
         /* Chat Input Bar */
