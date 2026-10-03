@@ -1486,12 +1486,12 @@ class AIAgentPanel extends HTMLElement {
                   </div>
                 </div>
                 <select class="pro-select" id="provider-select">
-                  <option value="openai" ${s.provider === 'openai' ? 'selected' : ''}>OpenAI (ChatGPT / GPT-4o / o1 / GPT-6)</option>
-                  <option value="gemini" ${s.provider === 'gemini' ? 'selected' : ''}>Google Gemini (Flash / Pro)</option>
-                  <option value="anthropic" ${s.provider === 'anthropic' ? 'selected' : ''}>Anthropic Claude (Sonnet / Opus)</option>
-                  <option value="deepseek" ${s.provider === 'deepseek' ? 'selected' : ''}>DeepSeek (V3 / R1 Reasoner)</option>
-                  <option value="openrouter" ${s.provider === 'openrouter' ? 'selected' : ''}>OpenRouter (מגוון מודלים גלובליים)</option>
-                  <option value="custom" ${s.provider === 'custom' ? 'selected' : ''}>שרת מקומי / Custom (Ollama)</option>
+                  <option value="openai" ${s.provider === 'openai' ? 'selected' : ''}>OpenAI</option>
+                  <option value="gemini" ${s.provider === 'gemini' ? 'selected' : ''}>Google Gemini</option>
+                  <option value="anthropic" ${s.provider === 'anthropic' ? 'selected' : ''}>Anthropic Claude</option>
+                  <option value="deepseek" ${s.provider === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
+                  <option value="openrouter" ${s.provider === 'openrouter' ? 'selected' : ''}>OpenRouter</option>
+                  <option value="custom" ${s.provider === 'custom' ? 'selected' : ''}>שרת מקומי / Custom</option>
                 </select>
               </div>
 

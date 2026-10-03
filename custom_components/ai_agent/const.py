@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.4.5"
+VERSION = "1.4.6"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -25,12 +25,12 @@ PROVIDERS = [
 ]
 
 PROVIDER_NAMES = {
-    PROVIDER_OPENAI: "OpenAI (ChatGPT / GPT-4o / o1 / GPT-6)",
-    PROVIDER_GEMINI: "Google Gemini (Flash / Pro)",
-    PROVIDER_ANTHROPIC: "Anthropic Claude (Sonnet / Opus / Haiku)",
-    PROVIDER_DEEPSEEK: "DeepSeek (V3 / R1 Reasoner)",
-    PROVIDER_OPENROUTER: "OpenRouter (All Global Models)",
-    PROVIDER_CUSTOM: "Custom Endpoint (Ollama / Local / Private API)",
+    PROVIDER_OPENAI: "OpenAI",
+    PROVIDER_GEMINI: "Google Gemini",
+    PROVIDER_ANTHROPIC: "Anthropic Claude",
+    PROVIDER_DEEPSEEK: "DeepSeek",
+    PROVIDER_OPENROUTER: "OpenRouter",
+    PROVIDER_CUSTOM: "שרת מקומי / Custom",
 }
 
 DEFAULT_BASE_URLS = {
@@ -157,6 +157,7 @@ DEFAULT_SETTINGS = {
     CONF_NOTIFY_MOBILE: True,
     CONF_MOBILE_NOTIFY_SERVICE: "notify.notify",
 }
+
 
 
 
