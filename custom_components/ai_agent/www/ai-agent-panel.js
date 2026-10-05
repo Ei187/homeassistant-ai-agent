@@ -92,6 +92,49 @@ class AIAgentPanel extends HTMLElement {
     }
   }
 
+  closeDrawer() {
+    this.isDrawerOpen = false;
+    const root = this.shadowRoot;
+    if (!root) return;
+    const drawer = root.querySelector('#drawer');
+    const plusBtn = root.querySelector('#plus-btn');
+    if (drawer) drawer.classList.remove('open');
+    if (plusBtn) plusBtn.classList.remove('active');
+  }
+
+  openDrawer() {
+    this.isDrawerOpen = true;
+    const root = this.shadowRoot;
+    if (!root) return;
+    const drawer = root.querySelector('#drawer');
+    const plusBtn = root.querySelector('#plus-btn');
+    if (drawer) drawer.classList.add('open');
+    if (plusBtn) plusBtn.classList.add('active');
+  }
+
+  toggleDrawer() {
+    if (this.isDrawerOpen) {
+      this.closeDrawer();
+    } else {
+      this.openDrawer();
+    }
+  }
+
+  updateHeaderStatusPill() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const pill = root.querySelector('#status-pill-btn');
+    if (!pill) return;
+    const s = this.settings;
+    const isFreeMode = !s.api_key;
+    pill.innerHTML = `
+      <div class="dot-indicator" style="background: ${isFreeMode ? '#30d158' : '#0a84ff'}; box-shadow: 0 0 8px ${isFreeMode ? '#30d158' : '#0a84ff'};"></div>
+      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${s.provider} • ${s.model}`}</span>
+      <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${s.thinking_level.toUpperCase()})</span>
+      <span style="margin-right: 4px;">⚙️</span>
+    `;
+  }
+
   async saveSettings() {
     if (!this._hass) return;
     const payload = {
@@ -115,9 +158,10 @@ class AIAgentPanel extends HTMLElement {
         await new Promise((r) => setTimeout(r, 900));
         await doSave();
       }
+      this.closeDrawer();
+      this.updateHeaderStatusPill();
+      this.renderMessages();
       this.showToast('✅ ההגדרות עודכנו בהצלחה!');
-      this.isDrawerOpen = false;
-      this.render();
     } catch (e) {
       this.showToast('⚠️ שגיאה בשמירה: ' + (e.message || e));
     }
@@ -1582,17 +1626,10 @@ class AIAgentPanel extends HTMLElement {
     const plusBtn = root.querySelector('#plus-btn');
     const statusPillBtn = root.querySelector('#status-pill-btn');
     const closeDrawerBtn = root.querySelector('#close-drawer-btn');
-    const drawer = root.querySelector('#drawer');
 
-    const toggleDrawer = () => {
-      this.isDrawerOpen = !this.isDrawerOpen;
-      if (drawer) drawer.classList.toggle('open', this.isDrawerOpen);
-      if (plusBtn) plusBtn.classList.toggle('active', this.isDrawerOpen);
-    };
-
-    if (plusBtn) plusBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
-    if (statusPillBtn) statusPillBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
-    if (closeDrawerBtn) closeDrawerBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDrawer(); };
+    if (plusBtn) plusBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.toggleDrawer(); };
+    if (statusPillBtn) statusPillBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.toggleDrawer(); };
+    if (closeDrawerBtn) closeDrawerBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); this.closeDrawer(); };
 
     // Thinking Pills — toggle class directly, no re-render
     root.querySelectorAll('.thinking-pill').forEach((pill) => {
@@ -1606,7 +1643,8 @@ class AIAgentPanel extends HTMLElement {
     // Save Settings from Drawer
     const saveBtn = root.querySelector('#save-drawer-btn');
     if (saveBtn) {
-      saveBtn.onclick = () => {
+      saveBtn.onclick = (e) => {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         this.settings.agent_role = root.querySelector('#agent-role-select').value;
         this.settings.provider = root.querySelector('#provider-select').value;
         this.settings.model = root.querySelector('#model-input').value.trim();
