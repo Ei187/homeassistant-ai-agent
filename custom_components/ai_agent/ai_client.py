@@ -206,7 +206,7 @@ class AIClient:
                 except Exception as err:
                     _LOGGER.warning("OpenAI streaming chat/completions failed (%s). Falling back to responses API.", err)
             try:
-                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level)
+                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
             except Exception as err:
                 _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
                 return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
@@ -539,7 +539,7 @@ class AIClient:
             low = err_text.lower()
             if "/v1/responses" in low:
                 _LOGGER.info("API advised using /v1/responses endpoint. Redirecting to _call_openai_responses.")
-                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level)
+                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
             if "reasoning_effort" not in low:
                 break
 

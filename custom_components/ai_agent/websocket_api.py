@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -181,6 +182,25 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     formatted_messages = list(history)
     formatted_messages.append({"role": "user", "content": msg["message"]})
 
+    # Streaming chunk and status emitter
+    async def on_stream_chunk(chunk_str: str):
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {"type": "chunk", "chunk": chunk_str},
+            )
+        )
+        # Yield to event loop so WebSocket frame is flushed onto the wire immediately
+        await asyncio.sleep(0)
+
+    def send_status(status_str: str):
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {"type": "status", "status": status_str},
+            )
+        )
+
     # If no API key is provided, run in Smart Free Tier mode
     if not api_key:
         user_raw = msg["message"]
@@ -356,6 +376,27 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "לחיבור מודלי-על מתקדמים לחשיבה וניתוח מעמיקים, לחץ על ה-`+` למטה והזן מפתח API."
             )
 
+        # Stream free tier response smoothly in real-time
+        send_status("מעבד נתונים...")
+        await asyncio.sleep(0.04)
+        words = reply.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else word + " "
+            await on_stream_chunk(chunk)
+            await asyncio.sleep(0.012)
+
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {
+                    "type": "done",
+                    "reply": reply,
+                    "fallback_notice": None,
+                    "actual_thinking_level": "free",
+                    "proposals": proposals,
+                },
+            )
+        )
         connection.send_result(
             msg["id"],
             {
@@ -393,23 +434,6 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "5. כשמשתמש מבקש לבצע שינוי קונפיגורציה, יצירת אוטומציה או התקנה: קרא לכלים המתאימים (edit_config_file, create_automation, install_custom_component). המערכת תכין עבור המשתמש כרטיס אישור ייעודי.\n"
             "6. עיצוב ותצוגה: ענה תמיד בעברית טבעית, שוטפת ומקצועית. עצב את תשובתך בצורה מסודרת, מרווחת וקריאה במיוחד באמצעות Markdown: השתמש בכותרות ברורות (###), רשימות ממוספרות (1., 2.) או תבליטים (-), הדגשות (**טקסט**), ושמות ישויות/קוד בתוך backticks (`entity_id`). הקפד על שורת רווח בין סעיפים ופסקאות כדי שהתשובה תהיה נעימה ומסודרת לעין."
         )
-
-        # Streaming chunk and status emitter
-        async def on_stream_chunk(chunk_str: str):
-            connection.send_message(
-                websocket_api.event_message(
-                    msg["id"],
-                    {"type": "chunk", "chunk": chunk_str},
-                )
-            )
-
-        def send_status(status_str: str):
-            connection.send_message(
-                websocket_api.event_message(
-                    msg["id"],
-                    {"type": "status", "status": status_str},
-                )
-            )
 
         send_status("מעבד נתונים...")
 

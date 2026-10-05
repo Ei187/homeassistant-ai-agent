@@ -278,9 +278,26 @@ class AIAgentPanel extends HTMLElement {
     let unsub = null;
     let completed = false;
 
+    // Typewriter Smoothing State
+    let targetText = '';
+    let renderedText = '';
+    let streamTimer = null;
+    let isServerDone = false;
+    let doneReply = '';
+    let doneProposals = [];
+    let doneFallbackNotice = null;
+
+    const stopTypewriter = () => {
+      if (streamTimer) {
+        clearInterval(streamTimer);
+        streamTimer = null;
+      }
+    };
+
     const finishMessage = (reply, proposals, fallbackNotice) => {
       if (completed) return;
       completed = true;
+      stopTypewriter();
       this.isLoading = false;
       assistantMsg.isStreaming = false;
       assistantMsg.streamingStatus = '';
@@ -301,20 +318,60 @@ class AIAgentPanel extends HTMLElement {
       }
     };
 
+    const tickTypewriter = () => {
+      const remaining = targetText.length - renderedText.length;
+      if (remaining > 0) {
+        // Natural human reading speed with dynamic acceleration for bursts
+        let step = 1;
+        if (remaining > 250) step = Math.ceil(remaining / 6);
+        else if (remaining > 100) step = Math.ceil(remaining / 10);
+        else if (remaining > 35) step = 3;
+        else if (remaining > 12) step = 2;
+        else step = 1;
+
+        renderedText += targetText.slice(renderedText.length, renderedText.length + step);
+        assistantMsg.content = renderedText;
+        assistantMsg.streamingStatus = '';
+        this._streamUpdateLastBubble(renderedText);
+      } else if (isServerDone) {
+        finishMessage(doneReply || targetText, doneProposals, doneFallbackNotice);
+      }
+    };
+
+    const startTypewriter = () => {
+      if (!streamTimer) {
+        streamTimer = setInterval(tickTypewriter, 16);
+      }
+    };
+
     try {
       if (this._hass.connection && typeof this._hass.connection.subscribeMessage === 'function') {
         unsub = await this._hass.connection.subscribeMessage(
           (event) => {
             if (!event) return;
             if (event.type === 'chunk' && event.chunk) {
-              assistantMsg.content += event.chunk;
+              targetText += event.chunk;
               assistantMsg.streamingStatus = '';
-              this._streamUpdateLastBubble(assistantMsg.content);
+              startTypewriter();
             } else if (event.type === 'status' && event.status) {
-              assistantMsg.streamingStatus = event.status;
-              this._streamUpdateStatus(assistantMsg.streamingStatus);
+              if (!targetText) {
+                assistantMsg.streamingStatus = event.status;
+                this._streamUpdateStatus(assistantMsg.streamingStatus);
+              }
             } else if (event.type === 'done') {
-              finishMessage(event.reply, event.proposals, event.fallback_notice);
+              isServerDone = true;
+              doneReply = event.reply || targetText;
+              doneProposals = event.proposals || [];
+              doneFallbackNotice = event.fallback_notice || null;
+              if (targetText.length === 0 && doneReply) {
+                // If chunks were buffered by network, type entire reply via typewriter
+                targetText = doneReply;
+                startTypewriter();
+              } else if (renderedText.length >= targetText.length) {
+                finishMessage(doneReply, doneProposals, doneFallbackNotice);
+              } else {
+                startTypewriter();
+              }
             } else if (event.type === 'error') {
               finishMessage(event.error, [], null);
             }
@@ -331,7 +388,12 @@ class AIAgentPanel extends HTMLElement {
           message: text,
           history: this.chatHistory.slice(0, -2).slice(-8),
         });
-        finishMessage(res.reply, res.proposals, res.fallback_notice);
+        isServerDone = true;
+        doneReply = res.reply || '';
+        doneProposals = res.proposals || [];
+        doneFallbackNotice = res.fallback_notice || null;
+        targetText = doneReply;
+        startTypewriter();
       }
     } catch (e) {
       if (!completed) {
@@ -408,9 +470,16 @@ class AIAgentPanel extends HTMLElement {
   renderMarkdown(text) {
     if (!text) return '';
 
+    // If text has an unclosed code block during live streaming, temporarily close it for clean card rendering
+    let textToParse = String(text);
+    const tripleBackticks = (textToParse.match(/```/g) || []).length;
+    if (tripleBackticks % 2 !== 0) {
+      textToParse += '\n```';
+    }
+
     // Step 1: Extract code blocks (```lang ... ```)
     const codeBlocks = [];
-    let processed = String(text).replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    let processed = textToParse.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
       const id = `%%CODEBLOCK_${codeBlocks.length}%%`;
       codeBlocks.push({ lang: lang || 'code', code: code.replace(/^\n+|\n+$/g, '') });
       return id;
@@ -1923,3 +1992,6 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
     description: 'סוכן AI אוטונומי עם כפתור +, מנגנון אישורים, תמיכה בכל הספקים ומודלים עתידיים.',
   });
 }
+
+console.info('%c🚀 AI Agent Pro v1.6.2 (Live Real-Time Streaming Active)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+
