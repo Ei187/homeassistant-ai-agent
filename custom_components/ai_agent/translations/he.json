@@ -18,5 +18,21 @@
         "description": "הגדר את הספק, המודל, רמת החשיבה ומפתח ה-API ישירות מתוך האינטגרציה."
       }
     }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "נדרשת הפעלה מחדש עבור AI Agent Pro",
+      "description": "העדכון לגרסה {version} הותקן בהצלחה! יש להפעיל מחדש את Home Assistant כדי להשלים את התקנת הקבצים החדשים."
+    }
+  },
+  "repairs": {
+    "restart_required": {
+      "step": {
+        "confirm_restart": {
+          "title": "הפעל מחדש את Home Assistant",
+          "description": "האם להפעיל מחדש את Home Assistant כעת כדי להשלים את עדכון AI Agent Pro {version}?"
+        }
+      }
+    }
   }
 }

@@ -4,18 +4,34 @@
     "step": {
       "user": {
         "title": "AI Agent Pro",
-        "description": "התקנה מהירה בלחיצה אחת"
+        "description": "Fast single-click setup"
       }
     },
     "abort": {
-      "already_configured": "האינטגרציה כבר מוגדרת במערכת."
+      "already_configured": "AI Agent Pro is already configured in Home Assistant."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "הגדרות AI Agent Pro",
-        "description": "הגדר את הספק, המודל, רמת החשיבה ומפתח ה-API ישירות מתוך האינטגרציה."
+        "title": "AI Agent Pro Settings",
+        "description": "Configure provider, model, thinking level, and API key directly from the integration."
+      }
+    }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "Restart required for AI Agent Pro",
+      "description": "The update to {version} has been installed successfully. Home Assistant needs to be restarted to load the updated files."
+    }
+  },
+  "repairs": {
+    "restart_required": {
+      "step": {
+        "confirm_restart": {
+          "title": "Restart Home Assistant",
+          "description": "Do you want to restart Home Assistant now to complete the update to AI Agent Pro {version}?"
+        }
       }
     }
   }

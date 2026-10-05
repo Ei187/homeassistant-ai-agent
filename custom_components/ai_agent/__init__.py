@@ -77,6 +77,13 @@ async def async_setup_common(hass: HomeAssistant) -> None:
         return
     hass.data[f"{DOMAIN}_common_registered"] = True
 
+    # Clear any pending restart repair issue since Home Assistant is starting up
+    try:
+        from homeassistant.helpers.issue_registry import async_delete_issue
+        async_delete_issue(hass, DOMAIN, "restart_required")
+    except Exception:
+        pass
+
     # Register custom brand view to intercept all brand image calls
     try:
         hass.http.register_view(AIAgentBrandView)

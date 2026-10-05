@@ -207,10 +207,31 @@ class AIAgentUpdateEntity(UpdateEntity):
         self._attr_in_progress = False
         self.async_write_ha_state()
 
+        # Register official Home Assistant Repair issue (Repairs -> Restart required)
+        try:
+            from homeassistant.helpers.issue_registry import (
+                IssueSeverity,
+                async_create_issue,
+            )
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                "restart_required",
+                is_fixable=True,
+                issue_domain=DOMAIN,
+                severity=IssueSeverity.WARNING,
+                translation_key="restart_required",
+                translation_placeholders={"version": f"v{raw_v}"},
+                data={"version": f"v{raw_v}"},
+            )
+            _LOGGER.info("Registered Home Assistant Repair issue: restart_required for v%s", raw_v)
+        except Exception as issue_err:
+            _LOGGER.warning("Could not register repairs issue: %s", issue_err)
+
         persistent_notification.async_create(
             self.hass,
             f"**AI Agent Pro שודרג בהצלחה לגרסה v{raw_v}!** 🎉\n\n"
-            f"כל הקבצים עודכנו בהצלחה. יש להפעיל מחדש את Home Assistant (הגדרות ➔ מערכת ➔ הפעלה מחדש) כדי להחיל את השינויים במלואם.",
+            f"כל הקבצים עודכנו בהצלחה. לחץ על 'תיקונים' (Repairs) בהגדרות או הפעל מחדש את Home Assistant להחלת השינויים.",
             title=f"AI Agent Pro עודכן ל-v{raw_v}",
             notification_id="ai_agent_update_success",
         )

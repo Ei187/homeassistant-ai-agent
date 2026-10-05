@@ -18,5 +18,21 @@
         "description": "Configure provider, model, thinking level, and API key directly from the integration."
       }
     }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "Restart required for AI Agent Pro",
+      "description": "The update to {version} has been installed successfully. Home Assistant needs to be restarted to load the updated files."
+    }
+  },
+  "repairs": {
+    "restart_required": {
+      "step": {
+        "confirm_restart": {
+          "title": "Restart Home Assistant",
+          "description": "Do you want to restart Home Assistant now to complete the update to AI Agent Pro {version}?"
+        }
+      }
+    }
   }
 }
