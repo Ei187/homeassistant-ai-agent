@@ -151,6 +151,15 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the integration via YAML."""
     hass.data.setdefault(DOMAIN, {})
     await async_setup_common(hass)
+    # Ensure storage and settings exist even before config entry is added
+    if "storage" not in hass.data[DOMAIN]:
+        store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        stored_data = await store.async_load()
+        settings = dict(DEFAULT_SETTINGS)
+        if stored_data:
+            settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
+        hass.data[DOMAIN]["storage"] = store
+        hass.data[DOMAIN]["settings"] = settings
     return True
 
 
@@ -164,10 +173,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     settings = dict(DEFAULT_SETTINGS)
     if entry.data:
         settings.update({k: v for k, v in entry.data.items() if v is not None and v != ""})
-    if stored_data:
-        settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
     if entry.options:
         settings.update({k: v for k, v in entry.options.items() if v is not None and v != ""})
+    # Stored panel settings take highest precedence
+    if stored_data:
+        settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
 
     async def _create_client() -> AIClient:
         return AIClient(

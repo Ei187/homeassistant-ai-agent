@@ -110,6 +110,22 @@ class AIAgentPanel extends HTMLElement {
     const plusBtn = root.querySelector('#plus-btn');
     if (drawer) drawer.classList.add('open');
     if (plusBtn) plusBtn.classList.add('active');
+
+    // Populate current values in drawer inputs
+    const roleSel = root.querySelector('#agent-role-select');
+    const provSel = root.querySelector('#provider-select');
+    const modelInp = root.querySelector('#model-input');
+    const keyInp = root.querySelector('#api-key-input');
+    if (roleSel && this.settings.agent_role) roleSel.value = this.settings.agent_role;
+    if (provSel && this.settings.provider) provSel.value = this.settings.provider;
+    if (modelInp && this.settings.model) modelInp.value = this.settings.model;
+    if (keyInp) keyInp.value = this.settings.api_key || '';
+
+    // Highlight active thinking pill
+    root.querySelectorAll('.thinking-pill').forEach((pill) => {
+      const lvl = pill.getAttribute('data-level');
+      pill.classList.toggle('active', lvl === this.settings.thinking_level);
+    });
   }
 
   toggleDrawer() {
@@ -147,16 +163,10 @@ class AIAgentPanel extends HTMLElement {
       base_url: this.settings.base_url || '',
       require_approval: this.settings.require_approval !== false,
     };
-    const doSave = async () => {
-      await this._hass.callWS(payload);
-    };
     try {
-      try {
-        await doSave();
-      } catch (firstErr) {
-        // HA may reload the entry after save — wait and retry once
-        await new Promise((r) => setTimeout(r, 900));
-        await doSave();
+      const res = await this._hass.callWS(payload);
+      if (res && res.settings) {
+        this.settings = { ...this.settings, ...res.settings };
       }
       this.closeDrawer();
       this.updateHeaderStatusPill();
@@ -1640,17 +1650,43 @@ class AIAgentPanel extends HTMLElement {
       };
     });
 
+    // Provider onchange helper: suggest default model when provider changes
+    const provSel = root.querySelector('#provider-select');
+    if (provSel) {
+      provSel.onchange = () => {
+        const prov = provSel.value;
+        const modelInp = root.querySelector('#model-input');
+        const defaultModels = {
+          openai: 'gpt-6-astra',
+          gemini: 'gemini-2.5-pro',
+          anthropic: 'claude-3-7-sonnet',
+          deepseek: 'deepseek-reasoner',
+          openrouter: 'openai/gpt-6-astra',
+          custom: 'llama3.3',
+        };
+        if (modelInp && defaultModels[prov]) {
+          modelInp.value = defaultModels[prov];
+        }
+      };
+    }
+
     // Save Settings from Drawer
     const saveBtn = root.querySelector('#save-drawer-btn');
     if (saveBtn) {
       saveBtn.onclick = (e) => {
         if (e) { e.preventDefault(); e.stopPropagation(); }
-        this.settings.agent_role = root.querySelector('#agent-role-select').value;
-        this.settings.provider = root.querySelector('#provider-select').value;
-        this.settings.model = root.querySelector('#model-input').value.trim();
-        this.settings.api_key = root.querySelector('#api-key-input').value.trim();
+        const roleSel = root.querySelector('#agent-role-select');
+        const pSel = root.querySelector('#provider-select');
+        const modelInp = root.querySelector('#model-input');
+        const keyInp = root.querySelector('#api-key-input');
         const activePill = root.querySelector('.thinking-pill.active');
+
+        if (roleSel) this.settings.agent_role = roleSel.value;
+        if (pSel) this.settings.provider = pSel.value;
+        if (modelInp) this.settings.model = modelInp.value.trim();
+        if (keyInp) this.settings.api_key = keyInp.value.trim();
         if (activePill) this.settings.thinking_level = activePill.getAttribute('data-level');
+
         this.saveSettings();
       };
     }

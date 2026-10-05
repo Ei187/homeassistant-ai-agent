@@ -11,6 +11,8 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
+from homeassistant.helpers.storage import Store
+
 from .const import (
     AGENT_SYSTEM_PROMPTS,
     CONF_AGENT_ROLE,
@@ -22,8 +24,11 @@ from .const import (
     CONF_PROVIDER,
     CONF_REQUIRE_APPROVAL,
     CONF_THINKING_LEVEL,
+    DEFAULT_BASE_URLS,
     DEFAULT_SETTINGS,
     DOMAIN,
+    STORAGE_KEY,
+    STORAGE_VERSION,
 )
 from .tools import PENDING_ACTIONS, TOOLS_SCHEMA, ToolEngine, async_resolve_action, get_entities_context
 
@@ -40,11 +45,22 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
 
 
 @websocket_api.websocket_command({vol.Required("type"): "ai_agent/get_settings"})
-@callback
-def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
+@websocket_api.async_response
+async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Return active integration settings."""
-    settings = hass.data.get(DOMAIN, {}).get("settings", {})
-    # Mask API key for security
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    settings = domain_data.get("settings")
+    if not settings:
+        store = domain_data.get("storage")
+        if not store:
+            store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+            domain_data["storage"] = store
+        stored_data = await store.async_load()
+        settings = dict(DEFAULT_SETTINGS)
+        if stored_data:
+            settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
+        domain_data["settings"] = settings
+
     safe_settings = dict(settings)
     if safe_settings.get(CONF_API_KEY):
         safe_settings[CONF_API_KEY] = "••••••••" + safe_settings[CONF_API_KEY][-4:]
@@ -66,46 +82,53 @@ def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 @websocket_api.async_response
 async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Save updated settings from the frontend."""
-    domain_data = hass.data.get(DOMAIN)
-    if not domain_data or "storage" not in domain_data:
-        connection.send_result(msg["id"], {"success": True})
-        return
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    store = domain_data.get("storage")
+    if not store:
+        store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        domain_data["storage"] = store
 
-    storage = domain_data["storage"]
-    current = domain_data["settings"]
+    current = domain_data.get("settings")
+    if current is None:
+        stored_data = await store.async_load()
+        current = dict(DEFAULT_SETTINGS)
+        if stored_data:
+            current.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
+        domain_data["settings"] = current
 
     for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_MODEL, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL):
-        if key in msg:
+        if key in msg and msg[key] is not None:
             current[key] = msg[key]
 
     if CONF_API_KEY in msg:
         raw_key = msg[CONF_API_KEY]
-        # Update key if cleared or changed, ignoring masked placeholder
-        if not raw_key or not str(raw_key).startswith("••••"):
-            current[CONF_API_KEY] = raw_key or ""
+        if raw_key is not None:
+            raw_str = str(raw_key).strip()
+            # Only update if user entered a real key or explicitly emptied it; ignore masked placeholder dots
+            if not raw_str or (not raw_str.startswith("••••") and not raw_str.startswith("****")):
+                current[CONF_API_KEY] = raw_str
 
-    await storage.async_save(current)
+    # Auto-adjust base_url to provider's default if needed
+    provider = current.get(CONF_PROVIDER)
+    if provider in DEFAULT_BASE_URLS:
+        curr_url = current.get(CONF_BASE_URL)
+        if not curr_url or any(curr_url == u for u in DEFAULT_BASE_URLS.values()):
+            current[CONF_BASE_URL] = DEFAULT_BASE_URLS[provider]
 
-    # Sync with config entry options so both entry options and storage stay in lockstep
-    entry = domain_data.get("entry")
-    if entry:
-        valid_options = {
-            CONF_AGENT_ROLE: current.get(CONF_AGENT_ROLE, DEFAULT_SETTINGS[CONF_AGENT_ROLE]),
-            CONF_PROVIDER: current.get(CONF_PROVIDER, DEFAULT_SETTINGS[CONF_PROVIDER]),
-            CONF_MODEL: current.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL]),
-            CONF_THINKING_LEVEL: current.get(CONF_THINKING_LEVEL, DEFAULT_SETTINGS[CONF_THINKING_LEVEL]),
-            CONF_API_KEY: current.get(CONF_API_KEY, ""),
-            CONF_BASE_URL: current.get(CONF_BASE_URL, DEFAULT_SETTINGS[CONF_BASE_URL]),
-            CONF_REQUIRE_APPROVAL: current.get(CONF_REQUIRE_APPROVAL, True),
-        }
-        hass.config_entries.async_update_entry(entry, options=valid_options)
+    # Save directly to persistent storage on disk
+    await store.async_save(current)
+    _LOGGER.info("AI Agent Pro settings saved to storage: provider=%s, model=%s", current.get(CONF_PROVIDER), current.get(CONF_MODEL))
 
-    # Refresh active client if available
+    # Refresh active client in-memory
     refresh_fn = domain_data.get("refresh_client")
     if refresh_fn:
         await refresh_fn()
 
-    connection.send_result(msg["id"], {"success": True})
+    safe_settings = dict(current)
+    if safe_settings.get(CONF_API_KEY):
+        safe_settings[CONF_API_KEY] = "••••••••" + safe_settings[CONF_API_KEY][-4:]
+
+    connection.send_result(msg["id"], {"success": True, "settings": safe_settings})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "ai_agent/get_pending_actions"})
