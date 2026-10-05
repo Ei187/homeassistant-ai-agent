@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 import aiohttp
 
@@ -192,7 +193,167 @@ class AIClient:
         if self.provider == PROVIDER_GEMINI and not self.base_url.endswith("/v1"):
             return await self._call_gemini_native(messages, system_prompt, tools, thinking_level)
         # Default OpenAI-compatible endpoint (OpenAI, DeepSeek, OpenRouter, Custom, or Gemini OpenAI compatibility)
+        if self.provider == PROVIDER_OPENAI and "api.openai.com" in self.base_url:
+            try:
+                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level)
+            except Exception as err:
+                _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
+                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level)
         return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level)
+
+    async def _call_openai_responses(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str],
+        tools: Optional[List[Dict[str, Any]]],
+        thinking_level: str,
+    ) -> Dict[str, Any]:
+        """Call OpenAI /v1/responses (supports function tools + reasoning together)."""
+        session = await self._get_session()
+        url = f"{self.base_url}/responses"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        def _text(content: Any) -> str:
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(
+                    p.get("text", "") for p in content if isinstance(p, dict)
+                )
+            return str(content)
+
+        input_items: List[Dict[str, Any]] = []
+        for m in messages:
+            role = m.get("role")
+            if role == "tool":
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": m.get("tool_call_id") or "",
+                    "output": _text(m.get("content")),
+                })
+                continue
+            if role == "assistant" and m.get("tool_calls"):
+                txt = _text(m.get("content"))
+                if txt:
+                    input_items.append({"role": "assistant", "content": txt})
+                for tc in m["tool_calls"]:
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments") or "{}"
+                    if not isinstance(args, str):
+                        args = json.dumps(args, ensure_ascii=False)
+                    input_items.append({
+                        "type": "function_call",
+                        "call_id": tc.get("id") or "",
+                        "name": fn.get("name") or "",
+                        "arguments": args,
+                    })
+                continue
+            if role == "system":
+                role = "developer"
+            if role not in ("user", "assistant", "developer"):
+                role = "user"
+            input_items.append({"role": role, "content": _text(m.get("content"))})
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": input_items,
+            "store": False,
+        }
+        if system_prompt:
+            payload["instructions"] = system_prompt
+
+        has_fc_items = any(i.get("type") == "function_call" for i in input_items)
+        if tools:
+            self._last_tools = tools
+        elif has_fc_items and getattr(self, "_last_tools", None):
+            tools = self._last_tools
+
+        if tools:
+            resp_tools = []
+            for t in tools:
+                fn = t.get("function", t)
+                resp_tools.append({
+                    "type": "function",
+                    "name": fn.get("name"),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                })
+            payload["tools"] = resp_tools
+            payload["tool_choice"] = "auto" if self._last_tools is not tools or not has_fc_items else "none"
+
+        if thinking_level and thinking_level != THINKING_OFF:
+            eff = thinking_level.lower()
+            if eff == THINKING_MAX:
+                eff = "xhigh"
+            if eff in ("low", "medium", "high", "xhigh"):
+                payload["reasoning"] = {"effort": eff}
+
+        data = None
+        err_text = ""
+        status = 0
+        req_info = None
+        history: Any = ()
+        tried_effort: set = {(payload.get("reasoning") or {}).get("effort")}
+        for _attempt in range(4):
+            async with session.post(url, headers=headers, json=payload, timeout=180) as resp:
+                if resp.status < 400:
+                    data = await resp.json()
+                    break
+                err_text = await resp.text()
+                status = resp.status
+                req_info, history = resp.request_info, resp.history
+            low = err_text.lower()
+            if "reasoning" not in low and "effort" not in low:
+                break
+            # Adjust reasoning effort based on API feedback
+            next_eff: Any = None
+            if "xhigh" in tried_effort and "high" not in tried_effort:
+                next_eff = "high"
+            elif None not in tried_effort:
+                next_eff = None
+            elif "low" not in tried_effort:
+                next_eff = "low"
+            else:
+                break
+            tried_effort.add(next_eff)
+            if next_eff is None:
+                payload.pop("reasoning", None)
+            else:
+                payload["reasoning"] = {"effort": next_eff}
+            _LOGGER.info("Responses API: retrying model '%s' with reasoning effort=%s", self.model, next_eff)
+
+        if data is None:
+            raise aiohttp.ClientResponseError(
+                req_info,
+                history,
+                status=status or 400,
+                message=f"API Error ({status}): {err_text}",
+            )
+
+        content_parts: List[str] = []
+        tool_calls: List[Dict[str, Any]] = []
+        for item in data.get("output", []) or []:
+            itype = item.get("type")
+            if itype == "message":
+                for c in item.get("content", []) or []:
+                    if c.get("type") in ("output_text", "text"):
+                        content_parts.append(c.get("text", ""))
+            elif itype == "function_call":
+                tool_calls.append({
+                    "id": item.get("call_id") or item.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name"),
+                        "arguments": item.get("arguments") or "{}",
+                    },
+                })
+        content = "".join(content_parts) or data.get("output_text") or ""
+        return {"content": content, "tool_calls": tool_calls, "raw": data}
 
     async def _call_openai_compatible(
         self,
@@ -252,6 +413,9 @@ class AIClient:
                 last_resp_info = (resp.request_info, resp.history)
 
             low = err_text.lower()
+            if "/v1/responses" in low:
+                _LOGGER.info("API advised using /v1/responses endpoint. Redirecting to _call_openai_responses.")
+                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level)
             if "reasoning_effort" not in low:
                 break
 
