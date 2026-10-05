@@ -218,6 +218,7 @@ class AIClient:
         system_prompt: Optional[str],
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Call OpenAI /v1/responses (supports function tools + reasoning together)."""
         session = await self._get_session()
@@ -304,6 +305,9 @@ class AIClient:
             if eff in ("low", "medium", "high", "xhigh"):
                 payload["reasoning"] = {"effort": eff}
 
+        if on_chunk is not None:
+            payload["stream"] = True
+
         data = None
         err_text = ""
         status = 0
@@ -313,11 +317,70 @@ class AIClient:
         for _attempt in range(4):
             async with session.post(url, headers=headers, json=payload, timeout=180) as resp:
                 if resp.status < 400:
-                    data = await resp.json()
-                    break
+                    if payload.get("stream"):
+                        accumulated_parts: List[str] = []
+                        tool_calls_dict: Dict[str, Dict[str, Any]] = {}
+                        current_call_id: Optional[str] = None
+                        async for raw_line in resp.content:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                event = json.loads(data_str)
+                            except Exception:
+                                continue
+                            etype = event.get("type", "")
+                            if "delta" in etype:
+                                text_delta = event.get("delta")
+                                if isinstance(text_delta, str):
+                                    accumulated_parts.append(text_delta)
+                                    if on_chunk:
+                                        await on_chunk(text_delta)
+                                elif "function_call" in etype:
+                                    cid = event.get("call_id") or current_call_id or "call_0"
+                                    if cid not in tool_calls_dict:
+                                        tool_calls_dict[cid] = {
+                                            "id": cid,
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""},
+                                        }
+                                    tool_calls_dict[cid]["function"]["arguments"] += str(event.get("delta") or "")
+                            elif etype == "response.output_item.added":
+                                it = event.get("item", {})
+                                if it.get("type") == "function_call":
+                                    current_call_id = it.get("call_id") or it.get("id") or str(uuid.uuid4())
+                                    tool_calls_dict[current_call_id] = {
+                                        "id": current_call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": it.get("name", ""),
+                                            "arguments": it.get("arguments", "") or "",
+                                        },
+                                    }
+                            elif etype == "response.completed":
+                                resp_obj = event.get("response", {})
+                                if not accumulated_parts and resp_obj.get("output_text"):
+                                    accumulated_parts.append(resp_obj["output_text"])
+                                    if on_chunk:
+                                        await on_chunk(resp_obj["output_text"])
+
+                        final_tc = list(tool_calls_dict.values())
+                        return {
+                            "content": "".join(accumulated_parts),
+                            "tool_calls": final_tc,
+                            "raw": {},
+                        }
+                    else:
+                        data = await resp.json()
+                        break
+
                 err_text = await resp.text()
                 status = resp.status
                 req_info, history = resp.request_info, resp.history
+
             low = err_text.lower()
             if "reasoning" not in low and "effort" not in low:
                 break
@@ -537,9 +600,46 @@ class AIClient:
             "anthropic-version": "2023-06-01",
         }
 
+        formatted_messages = []
+        for m in messages:
+            role = m.get("role")
+            if role == "tool":
+                formatted_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": m.get("tool_call_id") or "",
+                        "content": str(m.get("content") or ""),
+                    }],
+                })
+            elif role == "assistant" and m.get("tool_calls"):
+                blocks = []
+                if m.get("content"):
+                    blocks.append({"type": "text", "text": m["content"]})
+                for tc in m["tool_calls"]:
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments") or "{}"
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id") or str(uuid.uuid4()),
+                        "name": fn.get("name", ""),
+                        "input": args,
+                    })
+                formatted_messages.append({"role": "assistant", "content": blocks})
+            elif role in ("user", "assistant"):
+                formatted_messages.append({
+                    "role": role,
+                    "content": str(m.get("content") or ""),
+                })
+
         payload: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": formatted_messages,
             "max_tokens": 4096,
         }
 
@@ -577,6 +677,7 @@ class AIClient:
                 )
             if payload.get("stream"):
                 accumulated_text: List[str] = []
+                tool_calls_dict: Dict[int, Dict[str, Any]] = {}
                 async for raw_line in resp.content:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line or not line.startswith("data:"):
@@ -587,15 +688,33 @@ class AIClient:
                     except Exception:
                         continue
                     ctype = chunk.get("type")
-                    if ctype == "content_block_delta":
+                    idx = chunk.get("index", 0)
+                    if ctype == "content_block_start":
+                        cb = chunk.get("content_block", {})
+                        if cb.get("type") == "tool_use":
+                            tool_calls_dict[idx] = {
+                                "id": cb.get("id") or f"call_{idx}_{uuid.uuid4().hex[:6]}",
+                                "type": "function",
+                                "function": {
+                                    "name": cb.get("name", ""),
+                                    "arguments": "",
+                                },
+                            }
+                    elif ctype == "content_block_delta":
                         delta = chunk.get("delta") or {}
-                        if delta.get("type") == "text_delta":
-                            t = delta.get("text")
+                        dtype = delta.get("type")
+                        if dtype == "text_delta":
+                            t = delta.get("text", "")
                             if t:
                                 accumulated_text.append(t)
                                 if on_chunk:
                                     await on_chunk(t)
-                return {"content": "".join(accumulated_text), "tool_calls": [], "raw": {}}
+                        elif dtype == "input_json_delta":
+                            if idx in tool_calls_dict:
+                                tool_calls_dict[idx]["function"]["arguments"] += delta.get("partial_json", "")
+
+                final_tc = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
+                return {"content": "".join(accumulated_text), "tool_calls": final_tc, "raw": {}}
 
             data = await resp.json()
 
@@ -638,16 +757,58 @@ class AIClient:
 
         contents = []
         for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg.get("content", "")}],
-            })
+            role = msg.get("role")
+            if role == "tool":
+                contents.append({
+                    "role": "function",
+                    "parts": [{
+                        "functionResponse": {
+                            "name": msg.get("name", "tool"),
+                            "response": {"output": msg.get("content", "")},
+                        }
+                    }],
+                })
+            elif role == "assistant" and msg.get("tool_calls"):
+                parts = []
+                if msg.get("content"):
+                    parts.append({"text": msg["content"]})
+                for tc in msg["tool_calls"]:
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments") or "{}"
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    parts.append({
+                        "functionCall": {
+                            "name": fn.get("name", ""),
+                            "args": args,
+                        }
+                    })
+                contents.append({"role": "model", "parts": parts})
+            else:
+                gemini_role = "user" if role == "user" else "model"
+                contents.append({
+                    "role": gemini_role,
+                    "parts": [{"text": str(msg.get("content") or "")}],
+                })
 
         payload: Dict[str, Any] = {"contents": contents}
 
         if system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+        if tools:
+            func_decls = []
+            for t in tools:
+                fn = t.get("function", t)
+                func_decls.append({
+                    "name": fn.get("name"),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                })
+            payload["tools"] = [{"functionDeclarations": func_decls}]
 
         # Thinking config for Gemini
         if thinking_level != THINKING_OFF:
@@ -667,6 +828,7 @@ class AIClient:
                 )
             if on_chunk:
                 accumulated_text: List[str] = []
+                tool_calls: List[Dict[str, Any]] = []
                 async for raw_line in resp.content:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line or not line.startswith("data:"):
@@ -685,9 +847,19 @@ class AIClient:
                                 accumulated_text.append(t)
                                 if on_chunk:
                                     await on_chunk(t)
+                            fc = p.get("functionCall")
+                            if fc:
+                                tool_calls.append({
+                                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": fc.get("name", ""),
+                                        "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False),
+                                    },
+                                })
                 return {
                     "content": "".join(accumulated_text),
-                    "tool_calls": [],
+                    "tool_calls": tool_calls,
                     "raw": {},
                 }
 
@@ -695,13 +867,25 @@ class AIClient:
 
         candidates = data.get("candidates", [])
         text = ""
+        tool_calls = []
         if candidates and "content" in candidates[0]:
             parts = candidates[0]["content"].get("parts", [])
             for p in parts:
-                text += p.get("text", "")
+                if p.get("text"):
+                    text += p["text"]
+                if p.get("functionCall"):
+                    fc = p["functionCall"]
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": fc.get("name", ""),
+                            "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False),
+                        },
+                    })
 
         return {
             "content": text,
-            "tool_calls": [],
+            "tool_calls": tool_calls,
             "raw": data,
         }
