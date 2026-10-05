@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
+from pathlib import Path
 import zipfile
 from typing import Any
 import aiohttp
@@ -109,6 +111,33 @@ class AIAgentUpdateEntity(UpdateEntity):
                             self._attr_release_summary = f"גרסה חדשה v{tag} זמינה להתקנה."
         except Exception as err:
             _LOGGER.warning("Could not check for AI Agent Pro updates: %s", err)
+
+        # Check if disk files were updated (e.g. via HACS or terminal) while HA is still running old version
+        try:
+            manifest_file = Path(__file__).parent / "manifest.json"
+            if manifest_file.exists():
+                manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                disk_v = str(manifest_data.get("version", "")).strip().lstrip("v")
+                running_v = str(VERSION).strip().lstrip("v")
+                if disk_v and disk_v != running_v:
+                    from homeassistant.helpers.issue_registry import (
+                        IssueSeverity,
+                        async_create_issue,
+                    )
+                    async_create_issue(
+                        self.hass,
+                        DOMAIN,
+                        "restart_required",
+                        is_fixable=True,
+                        issue_domain=DOMAIN,
+                        severity=IssueSeverity.WARNING,
+                        translation_key="restart_required",
+                        translation_placeholders={"version": f"v{disk_v}"},
+                        data={"version": f"v{disk_v}"},
+                    )
+                    _LOGGER.info("Detected updated files on disk (v%s vs running v%s) — registered restart repair issue", disk_v, running_v)
+        except Exception as ex:
+            _LOGGER.debug("Could not verify disk version vs running version: %s", ex)
 
     async def async_install(self, version: str | None = None, backup: bool = False, **kwargs: Any) -> None:
         """Install update directly into custom_components from GitHub."""
