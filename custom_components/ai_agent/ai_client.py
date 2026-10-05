@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import aiohttp
 
 from .const import (
@@ -133,6 +133,7 @@ class AIClient:
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         override_thinking_level: Optional[str] = None,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Send chat request with automatic fallback on API error."""
         target_level = override_thinking_level or self.requested_thinking_level
@@ -147,7 +148,7 @@ class AIClient:
         last_error = None
         for level in trial_levels:
             try:
-                result = await self._execute_chat(messages, system_prompt, tools, thinking_level=level)
+                result = await self._execute_chat(messages, system_prompt, tools, thinking_level=level, on_chunk=on_chunk)
                 # If we had to drop down further at runtime
                 if level != resolved_level:
                     req_name = THINKING_LEVEL_NAMES.get(self.requested_thinking_level, self.requested_thinking_level)
@@ -189,20 +190,27 @@ class AIClient:
         system_prompt: Optional[str],
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Internal dispatch to appropriate provider API."""
         if self.provider == PROVIDER_ANTHROPIC:
-            return await self._call_anthropic(messages, system_prompt, tools, thinking_level)
+            return await self._call_anthropic(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
         if self.provider == PROVIDER_GEMINI and not self.base_url.endswith("/v1"):
-            return await self._call_gemini_native(messages, system_prompt, tools, thinking_level)
+            return await self._call_gemini_native(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
         # Default OpenAI-compatible endpoint (OpenAI, DeepSeek, OpenRouter, Custom, or Gemini OpenAI compatibility)
         if self.provider == PROVIDER_OPENAI and "api.openai.com" in self.base_url:
+            # If fast response or streaming requested, prefer standard /v1/chat/completions with SSE
+            if on_chunk is not None or thinking_level == THINKING_OFF:
+                try:
+                    return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+                except Exception as err:
+                    _LOGGER.warning("OpenAI streaming chat/completions failed (%s). Falling back to responses API.", err)
             try:
                 return await self._call_openai_responses(messages, system_prompt, tools, thinking_level)
             except Exception as err:
                 _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
-                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level)
-        return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level)
+                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+        return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
 
     async def _call_openai_responses(
         self,
@@ -364,6 +372,7 @@ class AIClient:
         system_prompt: Optional[str],
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Call standard OpenAI compatible endpoint."""
         session = await self._get_session()
@@ -397,10 +406,10 @@ class AIClient:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        if on_chunk is not None:
+            payload["stream"] = True
+
         # Adaptive retry: read the API error and adjust reasoning_effort accordingly.
-        # - "set reasoning_effort to 'none'" (tools on gpt-6-astra etc.) -> use 'none'
-        # - "does not support 'none'" -> use 'low'
-        # - parameter not supported at all -> omit it
         tried: set = {payload.get("reasoning_effort")}
         data = None
         err_text = ""
@@ -409,8 +418,57 @@ class AIClient:
         for _attempt in range(5):
             async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
                 if resp.status < 400:
-                    data = await resp.json()
-                    break
+                    if payload.get("stream"):
+                        accumulated_text: List[str] = []
+                        tool_calls_dict: Dict[int, Dict[str, Any]] = {}
+                        async for raw_line in resp.content:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except Exception:
+                                continue
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            text_piece = delta.get("content")
+                            if text_piece:
+                                accumulated_text.append(text_piece)
+                                if on_chunk:
+                                    await on_chunk(text_piece)
+                            tc_deltas = delta.get("tool_calls") or []
+                            for tc in tc_deltas:
+                                idx = tc.get("index", 0)
+                                if idx not in tool_calls_dict:
+                                    tool_calls_dict[idx] = {
+                                        "id": tc.get("id") or f"call_{idx}_{uuid.uuid4().hex[:6]}",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                if tc.get("id"):
+                                    tool_calls_dict[idx]["id"] = tc["id"]
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    tool_calls_dict[idx]["function"]["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    tool_calls_dict[idx]["function"]["arguments"] += fn["arguments"]
+
+                        final_tc = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
+                        content = "".join(accumulated_text)
+                        return {
+                            "content": content,
+                            "tool_calls": final_tc,
+                            "raw": {},
+                        }
+                    else:
+                        data = await resp.json()
+                        break
+
                 err_text = await resp.text()
                 last_status = resp.status
                 last_resp_info = (resp.request_info, resp.history)
@@ -468,6 +526,7 @@ class AIClient:
         system_prompt: Optional[str],
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Call Anthropic Claude API."""
         session = await self._get_session()
@@ -504,6 +563,9 @@ class AIClient:
                 })
             payload["tools"] = anthropic_tools
 
+        if on_chunk is not None:
+            payload["stream"] = True
+
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:
                 err_text = await resp.text()
@@ -513,6 +575,28 @@ class AIClient:
                     status=resp.status,
                     message=f"Anthropic API Error ({resp.status}): {err_text}",
                 )
+            if payload.get("stream"):
+                accumulated_text: List[str] = []
+                async for raw_line in resp.content:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    try:
+                        chunk = json.loads(data_str)
+                    except Exception:
+                        continue
+                    ctype = chunk.get("type")
+                    if ctype == "content_block_delta":
+                        delta = chunk.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            t = delta.get("text")
+                            if t:
+                                accumulated_text.append(t)
+                                if on_chunk:
+                                    await on_chunk(t)
+                return {"content": "".join(accumulated_text), "tool_calls": [], "raw": {}}
+
             data = await resp.json()
 
         content_blocks = data.get("content", [])
@@ -544,10 +628,12 @@ class AIClient:
         system_prompt: Optional[str],
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
+        on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Call Google Gemini REST API."""
         session = await self._get_session()
-        url = f"{self.base_url}/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        method_name = "streamGenerateContent?alt=sse&key=" if on_chunk else "generateContent?key="
+        url = f"{self.base_url}/v1beta/models/{self.model}:{method_name}{self.api_key}"
         headers = {"Content-Type": "application/json"}
 
         contents = []
@@ -579,6 +665,32 @@ class AIClient:
                     status=resp.status,
                     message=f"Gemini API Error ({resp.status}): {err_text}",
                 )
+            if on_chunk:
+                accumulated_text: List[str] = []
+                async for raw_line in resp.content:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    try:
+                        chunk = json.loads(data_str)
+                    except Exception:
+                        continue
+                    candidates = chunk.get("candidates") or []
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts") or []
+                        for p in parts:
+                            t = p.get("text")
+                            if t:
+                                accumulated_text.append(t)
+                                if on_chunk:
+                                    await on_chunk(t)
+                return {
+                    "content": "".join(accumulated_text),
+                    "tool_calls": [],
+                    "raw": {},
+                }
+
             data = await resp.json()
 
         candidates = data.get("candidates", [])

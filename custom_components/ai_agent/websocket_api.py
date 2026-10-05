@@ -394,11 +394,31 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "6. עיצוב ותצוגה: ענה תמיד בעברית טבעית, שוטפת ומקצועית. עצב את תשובתך בצורה מסודרת, מרווחת וקריאה במיוחד באמצעות Markdown: השתמש בכותרות ברורות (###), רשימות ממוספרות (1., 2.) או תבליטים (-), הדגשות (**טקסט**), ושמות ישויות/קוד בתוך backticks (`entity_id`). הקפד על שורת רווח בין סעיפים ופסקאות כדי שהתשובה תהיה נעימה ומסודרת לעין."
         )
 
+        # Streaming chunk and status emitter
+        async def on_stream_chunk(chunk_str: str):
+            connection.send_message(
+                websocket_api.event_message(
+                    msg["id"],
+                    {"type": "chunk", "chunk": chunk_str},
+                )
+            )
+
+        def send_status(status_str: str):
+            connection.send_message(
+                websocket_api.event_message(
+                    msg["id"],
+                    {"type": "status", "status": status_str},
+                )
+            )
+
+        send_status("מעבד נתונים...")
+
         # Step 1: Call Model with Tools
         response = await client.chat(
             messages=formatted_messages,
             system_prompt=full_system_prompt,
             tools=TOOLS_SCHEMA,
+            on_chunk=on_stream_chunk,
         )
 
         fallback_notice = response.get("fallback_notice")
@@ -410,6 +430,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
 
         # Step 2: Handle tool calls strictly per OpenAI Chat Completion specification
         if tool_calls:
+            send_status("⚡ מפעיל פעולה במערכת...")
             formatted_messages.append({
                 "role": "assistant",
                 "content": content or None,
@@ -439,14 +460,28 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 })
 
+            send_status("מנסח תשובה...")
             # Call model again with tool results to formulate user reply — instant response without heavy reasoning
             final_turn = await client.chat(
                 messages=formatted_messages,
                 system_prompt=full_system_prompt,
                 override_thinking_level=THINKING_OFF,
+                on_chunk=on_stream_chunk,
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {
+                    "type": "done",
+                    "reply": content,
+                    "fallback_notice": fallback_notice,
+                    "actual_thinking_level": actual_level,
+                    "proposals": proposals,
+                },
+            )
+        )
         connection.send_result(
             msg["id"],
             {
@@ -458,4 +493,13 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         )
     except Exception as err:
         _LOGGER.exception("Error during AI chat handling: %s", err)
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {
+                    "type": "error",
+                    "error": f"⚠️ שגיאה בתקשורת עם הסוכן: {err}",
+                },
+            )
+        )
         connection.send_error(msg["id"], "chat_error", str(err))

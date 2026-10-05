@@ -261,41 +261,120 @@ class AIAgentPanel extends HTMLElement {
 
     this.isLoading = true;
     this.chatHistory.push({ role: 'user', content: text });
+
+    // Create assistant message placeholder for instant live streaming
+    const assistantMsg = {
+      role: 'assistant',
+      content: '',
+      proposals: [],
+      isStreaming: true,
+      streamingStatus: 'מתחבר לסוכן...',
+    };
+    this.chatHistory.push(assistantMsg);
     this.saveChatHistory();
     this.render();
     this.scrollToBottom();
 
-    try {
-      const res = await this._hass.callWS({
-        type: 'ai_agent/chat',
-        message: text,
-        history: this.chatHistory.slice(-8),
-      });
+    let unsub = null;
+    let completed = false;
 
-      this.activeFallbackNotice = res.fallback_notice || null;
-
-      if (res.proposals && res.proposals.length > 0) {
-        this.pendingProposals.push(...res.proposals);
-      }
-
-      this.chatHistory.push({
-        role: 'assistant',
-        content: res.reply || 'הפעולה עובדה בהצלחה.',
-        proposals: res.proposals || [],
-      });
-      this.saveChatHistory();
-    } catch (e) {
-      this.chatHistory.push({
-        role: 'assistant',
-        content: `⚠️ שגיאה בתקשורת עם הסוכן: ${e.message || e}`,
-        isError: true,
-      });
-      this.saveChatHistory();
-    } finally {
+    const finishMessage = (reply, proposals, fallbackNotice) => {
+      if (completed) return;
+      completed = true;
       this.isLoading = false;
+      assistantMsg.isStreaming = false;
+      assistantMsg.streamingStatus = '';
+      if (reply) assistantMsg.content = reply;
+      if (!assistantMsg.content.trim()) {
+        assistantMsg.content = 'הפעולה עובדה בהצלחה.';
+      }
+      if (proposals && proposals.length > 0) {
+        assistantMsg.proposals = proposals;
+        this.pendingProposals.push(...proposals);
+      }
+      this.activeFallbackNotice = fallbackNotice || null;
+      this.saveChatHistory();
       this.render();
       this.scrollToBottom();
+      if (typeof unsub === 'function') {
+        try { unsub(); } catch (_) {}
+      }
+    };
+
+    try {
+      if (this._hass.connection && typeof this._hass.connection.subscribeMessage === 'function') {
+        unsub = await this._hass.connection.subscribeMessage(
+          (event) => {
+            if (!event) return;
+            if (event.type === 'chunk' && event.chunk) {
+              assistantMsg.content += event.chunk;
+              assistantMsg.streamingStatus = '';
+              this._streamUpdateLastBubble(assistantMsg.content);
+            } else if (event.type === 'status' && event.status) {
+              assistantMsg.streamingStatus = event.status;
+              this._streamUpdateStatus(assistantMsg.streamingStatus);
+            } else if (event.type === 'done') {
+              finishMessage(event.reply, event.proposals, event.fallback_notice);
+            } else if (event.type === 'error') {
+              finishMessage(event.error, [], null);
+            }
+          },
+          {
+            type: 'ai_agent/chat',
+            message: text,
+            history: this.chatHistory.slice(0, -2).slice(-8),
+          }
+        );
+      } else {
+        const res = await this._hass.callWS({
+          type: 'ai_agent/chat',
+          message: text,
+          history: this.chatHistory.slice(0, -2).slice(-8),
+        });
+        finishMessage(res.reply, res.proposals, res.fallback_notice);
+      }
+    } catch (e) {
+      if (!completed) {
+        assistantMsg.isStreaming = false;
+        assistantMsg.isError = true;
+        finishMessage(`⚠️ שגיאה בתקשורת עם הסוכן: ${e.message || e}`, [], null);
+      }
     }
+  }
+
+  _streamUpdateLastBubble(content) {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const chatScroll = root.querySelector('#chat-scroll');
+    const bubbles = root.querySelectorAll('.message-bubble.message-assistant');
+    if (!bubbles || bubbles.length === 0) return;
+    const lastBubble = bubbles[bubbles.length - 1];
+    let mdBody = lastBubble.querySelector('.markdown-body');
+    if (!mdBody) {
+      lastBubble.innerHTML = `<div class="markdown-body"></div>`;
+      mdBody = lastBubble.querySelector('.markdown-body');
+    }
+    mdBody.innerHTML = this.renderMarkdown(content) + '<span class="streaming-cursor">▌</span>';
+    if (chatScroll) {
+      const dist = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
+      if (dist < 180) {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      }
+    }
+  }
+
+  _streamUpdateStatus(status) {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const bubbles = root.querySelectorAll('.message-bubble.message-assistant');
+    if (!bubbles || bubbles.length === 0) return;
+    const lastBubble = bubbles[bubbles.length - 1];
+    const md = lastBubble.querySelector('.markdown-body');
+    if (md && md.textContent.trim()) return;
+    lastBubble.innerHTML = `<div style="display:flex;gap:8px;align-items:center;color:#86868b;font-size:13.5px;">
+      <span class="streaming-status">${this.escapeHtml(status)}</span>
+      <span style="font-size:15px;animation:spin 1s infinite linear;">⚙️</span>
+    </div>`;
   }
 
   editAndResendMessage(index, newText) {
@@ -547,8 +626,15 @@ class AIAgentPanel extends HTMLElement {
           </div>`;
         }
       } else {
+        const isLive = msg.isStreaming && this.isLoading;
         html += `<div class="message-bubble message-assistant">
-          <div class="markdown-body">${this.renderMarkdown(msg.content)}</div>
+          ${msg.content
+            ? `<div class="markdown-body">${this.renderMarkdown(msg.content)}${isLive ? '<span class="streaming-cursor">▌</span>' : ''}</div>`
+            : `<div style="display:flex;gap:8px;align-items:center;color:#86868b;font-size:13.5px;">
+                <span class="streaming-status">${this.escapeHtml(msg.streamingStatus || 'מעבד נתונים...')}</span>
+                <span style="font-size:15px;animation:spin 1s infinite linear;">⚙️</span>
+              </div>`
+          }
           ${msg.proposals && msg.proposals.length > 0 ? msg.proposals.map((p) => `
             <div class="proposal-card">
               <div class="proposal-header">
@@ -565,12 +651,6 @@ class AIAgentPanel extends HTMLElement {
       }
     });
 
-    if (this.isLoading) {
-      html += `<div class="message-bubble message-assistant" style="display:flex;gap:8px;align-items:center;">
-        <span>חשיבה ועיבוד נתונים...</span>
-        <span style="font-size:16px;animation:spin 1s infinite linear;">⚙️</span>
-      </div>`;
-    }
     return html;
   }
 
@@ -866,6 +946,18 @@ class AIAgentPanel extends HTMLElement {
           border-bottom-right-radius: 4px;
           border: 1px solid rgba(255, 255, 255, 0.06);
           width: fit-content;
+        }
+
+        .streaming-cursor {
+          display: inline-block;
+          margin-right: 3px;
+          color: #0a84ff;
+          font-weight: 700;
+          animation: blinkCursor 0.8s infinite;
+        }
+        @keyframes blinkCursor {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
         }
 
         /* User Message Wrapper with ChatGPT-style Edit */
