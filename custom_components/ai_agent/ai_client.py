@@ -233,46 +233,60 @@ class AIClient:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
-            if resp.status >= 400:
+        # Adaptive retry: read the API error and adjust reasoning_effort accordingly.
+        # - "set reasoning_effort to 'none'" (tools on gpt-6-astra etc.) -> use 'none'
+        # - "does not support 'none'" -> use 'low'
+        # - parameter not supported at all -> omit it
+        tried: set = {payload.get("reasoning_effort")}
+        data = None
+        err_text = ""
+        last_status = 0
+        last_resp_info = None
+        for _attempt in range(5):
+            async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
+                if resp.status < 400:
+                    data = await resp.json()
+                    break
                 err_text = await resp.text()
+                last_status = resp.status
+                last_resp_info = (resp.request_info, resp.history)
 
-                # Retry logic for reasoning_effort parameter errors
-                if "reasoning_effort" in err_text:
-                    if "reasoning_effort" in payload:
-                        _LOGGER.info("Model '%s' failed with reasoning_effort=%s. Retrying without reasoning_effort.", self.model, payload.get("reasoning_effort"))
-                        payload.pop("reasoning_effort", None)
-                        async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
-                            if retry_resp.status < 400:
-                                data = await retry_resp.json()
-                                choice = data["choices"][0]["message"]
-                                return {
-                                    "content": choice.get("content") or "",
-                                    "tool_calls": choice.get("tool_calls") or [],
-                                    "raw": data,
-                                }
-                            err_text = await retry_resp.text()
-                    elif any(k in err_text.lower() for k in ["required", "must provide", "must be"]):
-                        _LOGGER.info("Model '%s' requires reasoning_effort. Retrying with 'low'.", self.model)
-                        payload["reasoning_effort"] = "low"
-                        async with session.post(url, headers=headers, json=payload, timeout=90) as retry_resp:
-                            if retry_resp.status < 400:
-                                data = await retry_resp.json()
-                                choice = data["choices"][0]["message"]
-                                return {
-                                    "content": choice.get("content") or "",
-                                    "tool_calls": choice.get("tool_calls") or [],
-                                    "raw": data,
-                                }
-                            err_text = await retry_resp.text()
+            low = err_text.lower()
+            if "reasoning_effort" not in low:
+                break
 
-                raise aiohttp.ClientResponseError(
-                    resp.request_info,
-                    resp.history,
-                    status=resp.status,
-                    message=f"API Error ({resp.status}): {err_text}",
-                )
-            data = await resp.json()
+            next_effort: Any = "__stop__"
+            if "'none'" in low and ("set reasoning_effort" in low or "to use function tools" in low):
+                next_effort = "none"
+            elif "does not support 'none'" in low or "supported values" in low:
+                next_effort = "low"
+            elif "unsupported parameter" in low or "not recognized" in low or "extra" in low:
+                next_effort = None
+
+            # Fallback ladder if the message didn't match a known pattern
+            if next_effort == "__stop__" or next_effort in tried:
+                for cand in ("none", None, "low"):
+                    if cand not in tried:
+                        next_effort = cand
+                        break
+                else:
+                    break
+
+            tried.add(next_effort)
+            _LOGGER.info("Model '%s': retrying with reasoning_effort=%s", self.model, next_effort)
+            if next_effort is None:
+                payload.pop("reasoning_effort", None)
+            else:
+                payload["reasoning_effort"] = next_effort
+
+        if data is None:
+            info, hist = last_resp_info if last_resp_info else (None, ())
+            raise aiohttp.ClientResponseError(
+                info,
+                hist,
+                status=last_status or 400,
+                message=f"API Error ({last_status}): {err_text}",
+            )
 
         choice = data["choices"][0]["message"]
         return {

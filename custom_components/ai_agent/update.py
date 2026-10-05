@@ -90,6 +90,11 @@ class AIAgentUpdateEntity(UpdateEntity):
 
     async def async_update(self) -> None:
         """Check GitHub for the latest release."""
+        # If HACS is installed, HACS already shows the update and the restart repair.
+        # Stay silent to avoid duplicate update / restart notifications.
+        if "hacs" in self.hass.config.components:
+            self._attr_latest_version = self._attr_installed_version
+            return
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             session = async_get_clientsession(self.hass)
