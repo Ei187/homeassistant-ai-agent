@@ -9,7 +9,18 @@ class AIAgentPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.hass = null;
-    this.settings = {
+    this.settings = this.loadCachedSettings();
+    this.chatHistory = this.loadChatHistory();
+    this.pendingProposals = [];
+    this.isLoading = false;
+    this.activeFallbackNotice = null;
+    this.isDrawerOpen = false;
+    this.editingIndex = null;
+    this._lastCodeBlocks = [];
+  }
+
+  loadCachedSettings() {
+    const defaults = {
       agent_role: 'omni',
       provider: 'openai',
       model: 'gpt-6-astra',
@@ -18,13 +29,22 @@ class AIAgentPanel extends HTMLElement {
       api_key: '',
       base_url: 'https://api.openai.com/v1',
     };
-    this.chatHistory = this.loadChatHistory();
-    this.pendingProposals = [];
-    this.isLoading = false;
-    this.activeFallbackNotice = null;
-    this.isDrawerOpen = false;
-    this.editingIndex = null;
-    this._lastCodeBlocks = [];
+    try {
+      const saved = localStorage.getItem('ai_agent_pro_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return { ...defaults, ...parsed };
+        }
+      }
+    } catch (e) {}
+    return defaults;
+  }
+
+  saveCachedSettings() {
+    try {
+      localStorage.setItem('ai_agent_pro_settings', JSON.stringify(this.settings));
+    } catch (e) {}
   }
 
   loadChatHistory() {
@@ -85,11 +105,33 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS({ type: 'ai_agent/get_settings' });
       if (res) {
         this.settings = { ...this.settings, ...res };
-        this.render();
+        this.saveCachedSettings();
+        this.syncSettingsToUI();
       }
     } catch (e) {
       console.warn('Could not load AI Agent settings from WS', e);
     }
+  }
+
+  syncSettingsToUI() {
+    this.updateHeaderStatusPill();
+    const root = this.shadowRoot;
+    if (!root) return;
+
+    const roleSel = root.querySelector('#agent-role-select');
+    const provSel = root.querySelector('#provider-select');
+    const modelInp = root.querySelector('#model-input');
+    const keyInp = root.querySelector('#api-key-input');
+
+    if (roleSel && this.settings.agent_role) roleSel.value = this.settings.agent_role;
+    if (provSel && this.settings.provider) provSel.value = this.settings.provider;
+    if (modelInp && this.settings.model) modelInp.value = this.settings.model;
+    if (keyInp) keyInp.value = this.settings.api_key || '';
+
+    root.querySelectorAll('.thinking-pill').forEach((pill) => {
+      const lvl = pill.getAttribute('data-level');
+      pill.classList.toggle('active', lvl === this.settings.thinking_level);
+    });
   }
 
   closeDrawer() {
@@ -111,21 +153,7 @@ class AIAgentPanel extends HTMLElement {
     if (drawer) drawer.classList.add('open');
     if (plusBtn) plusBtn.classList.add('active');
 
-    // Populate current values in drawer inputs
-    const roleSel = root.querySelector('#agent-role-select');
-    const provSel = root.querySelector('#provider-select');
-    const modelInp = root.querySelector('#model-input');
-    const keyInp = root.querySelector('#api-key-input');
-    if (roleSel && this.settings.agent_role) roleSel.value = this.settings.agent_role;
-    if (provSel && this.settings.provider) provSel.value = this.settings.provider;
-    if (modelInp && this.settings.model) modelInp.value = this.settings.model;
-    if (keyInp) keyInp.value = this.settings.api_key || '';
-
-    // Highlight active thinking pill
-    root.querySelectorAll('.thinking-pill').forEach((pill) => {
-      const lvl = pill.getAttribute('data-level');
-      pill.classList.toggle('active', lvl === this.settings.thinking_level);
-    });
+    this.syncSettingsToUI();
   }
 
   toggleDrawer() {
@@ -143,10 +171,19 @@ class AIAgentPanel extends HTMLElement {
     if (!pill) return;
     const s = this.settings;
     const isFreeMode = !s.api_key;
+    const provName = {
+      openai: 'OpenAI',
+      gemini: 'Google Gemini',
+      anthropic: 'Anthropic Claude',
+      deepseek: 'DeepSeek',
+      openrouter: 'OpenRouter',
+      custom: 'Custom',
+    }[s.provider] || s.provider;
+
     pill.innerHTML = `
       <div class="dot-indicator" style="background: ${isFreeMode ? '#30d158' : '#0a84ff'}; box-shadow: 0 0 8px ${isFreeMode ? '#30d158' : '#0a84ff'};"></div>
-      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${s.provider} • ${s.model}`}</span>
-      <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${s.thinking_level.toUpperCase()})</span>
+      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${provName} • ${s.model}`}</span>
+      <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${(s.thinking_level || 'off').toUpperCase()})</span>
       <span style="margin-right: 4px;">⚙️</span>
     `;
   }
@@ -168,8 +205,9 @@ class AIAgentPanel extends HTMLElement {
       if (res && res.settings) {
         this.settings = { ...this.settings, ...res.settings };
       }
+      this.saveCachedSettings();
       this.closeDrawer();
-      this.updateHeaderStatusPill();
+      this.syncSettingsToUI();
       this.renderMessages();
       this.showToast('✅ ההגדרות עודכנו בהצלחה!');
     } catch (e) {
@@ -462,7 +500,14 @@ class AIAgentPanel extends HTMLElement {
             ? `אתה פועל כרגע ב<b>מצב חינמי</b> ללא צורך במפתח API!<br/>
                אפשר לבקש ממני לסרוק שגיאות, לבנות אוטומציות או לשלוט במכשירים.<br/>
                רוצה מודל ספציפי? לחץ על <b>+</b> למטה והזן מפתח API.`
-            : `מחובר לספק <b>${s.provider}</b> עם מודל <b>${s.model}</b>.<br/>מה תרצה שנעשה בבית היום?`}
+            : `מחובר לספק <b>${{
+                openai: 'OpenAI',
+                gemini: 'Google Gemini',
+                anthropic: 'Anthropic Claude',
+                deepseek: 'DeepSeek',
+                openrouter: 'OpenRouter',
+                custom: 'Custom',
+              }[s.provider] || s.provider}</b> עם מודל <b>${s.model}</b>.<br/>מה תרצה שנעשה בבית היום?`}
         </div>
       </div>`;
     }
@@ -1588,9 +1633,29 @@ class AIAgentPanel extends HTMLElement {
                     <div class="card-subtitle">השאר ריק למצב חינמי בסיסי</div>
                   </div>
                 </div>
-                <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API (אופציונלי)..." value="${s.api_key || ''}" />
-                <div style="font-size: 11px; color: #86868b; margin-top: 4px;">
-                  ללא מפתח המערכת תפעל במצב חינמי עד המגבלה.
+                <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
+                  <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API (אופציונלי)..." value="${s.api_key || ''}" style="flex: 1;" />
+                  <button type="button" id="toggle-key-visibility-btn" title="הצג / הסתר מפתח API" style="
+                    background: rgba(255, 255, 255, 0.08);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 10px;
+                    color: #f5f5f7;
+                    padding: 8px 12px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 16px;
+                    line-height: 1;
+                    height: 42px;
+                    box-sizing: border-box;
+                    transition: all 0.2s ease;
+                  ">
+                    👁️
+                  </button>
+                </div>
+                <div style="font-size: 11px; color: #86868b; margin-top: 6px;">
+                  ללא מפתח המערכת תפעל במצב חינמי עד המגבלה. לחץ על העין להצגת או הסתרת המפתח.
                 </div>
               </div>
             </div>
@@ -1666,6 +1731,25 @@ class AIAgentPanel extends HTMLElement {
         };
         if (modelInp && defaultModels[prov]) {
           modelInp.value = defaultModels[prov];
+        }
+      };
+    }
+
+    // Toggle API Key visibility
+    const toggleKeyBtn = root.querySelector('#toggle-key-visibility-btn');
+    const keyInp = root.querySelector('#api-key-input');
+    if (toggleKeyBtn && keyInp) {
+      toggleKeyBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (keyInp.type === 'password') {
+          keyInp.type = 'text';
+          toggleKeyBtn.textContent = '🙈';
+          toggleKeyBtn.title = 'הסתר מפתח API';
+        } else {
+          keyInp.type = 'password';
+          toggleKeyBtn.textContent = '👁️';
+          toggleKeyBtn.title = 'הצג מפתח API';
         }
       };
     }

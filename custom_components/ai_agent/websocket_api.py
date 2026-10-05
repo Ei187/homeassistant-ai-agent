@@ -62,8 +62,9 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
         domain_data["settings"] = settings
 
     safe_settings = dict(settings)
-    if safe_settings.get(CONF_API_KEY):
-        safe_settings[CONF_API_KEY] = "••••••••" + safe_settings[CONF_API_KEY][-4:]
+    key = safe_settings.get(CONF_API_KEY, "")
+    if key and (key.startswith("••••") or key.startswith("****")):
+        safe_settings[CONF_API_KEY] = ""
     connection.send_result(msg["id"], safe_settings)
 
 
@@ -96,7 +97,7 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
             current.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
         domain_data["settings"] = current
 
-    for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_MODEL, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL):
+    for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_MODEL, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL, CONF_NOTIFY_MOBILE, CONF_MOBILE_NOTIFY_SERVICE):
         if key in msg and msg[key] is not None:
             current[key] = msg[key]
 
@@ -104,8 +105,10 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         raw_key = msg[CONF_API_KEY]
         if raw_key is not None:
             raw_str = str(raw_key).strip()
-            # Only update if user entered a real key or explicitly emptied it; ignore masked placeholder dots
-            if not raw_str or (not raw_str.startswith("••••") and not raw_str.startswith("****")):
+            # Only update if user entered a real key or explicitly emptied it; ignore legacy masked dots
+            if raw_str.startswith("••••") or raw_str.startswith("****"):
+                pass
+            else:
                 current[CONF_API_KEY] = raw_str
 
     # Auto-adjust base_url to provider's default if needed
@@ -125,8 +128,9 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         await refresh_fn()
 
     safe_settings = dict(current)
-    if safe_settings.get(CONF_API_KEY):
-        safe_settings[CONF_API_KEY] = "••••••••" + safe_settings[CONF_API_KEY][-4:]
+    key = safe_settings.get(CONF_API_KEY, "")
+    if key and (key.startswith("••••") or key.startswith("****")):
+        safe_settings[CONF_API_KEY] = ""
 
     connection.send_result(msg["id"], {"success": True, "settings": safe_settings})
 
