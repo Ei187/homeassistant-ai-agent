@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import AGENT_SYSTEM_PROMPTS, CONF_AGENT_ROLE, CONF_API_KEY, CONF_REQUIRE_APPROVAL, DOMAIN
+from .const import AGENT_SYSTEM_PROMPTS, CONF_AGENT_ROLE, CONF_API_KEY, CONF_REQUIRE_APPROVAL, DOMAIN, THINKING_OFF
 from .tools import TOOLS_SCHEMA, ToolEngine, get_entities_context
 
 _LOGGER = logging.getLogger(__name__)
@@ -143,10 +143,11 @@ class AIAgentConversationEntity(conversation.ConversationEntity):
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     })
 
-                # Step 3: Second turn for model to formulate natural user reply
+                # Step 3: Second turn for model to formulate natural user reply — fast response
                 final_turn = await client.chat(
                     messages=messages_payload,
                     system_prompt=full_system_prompt,
+                    override_thinking_level=THINKING_OFF,
                 )
                 content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 

@@ -436,10 +436,11 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 })
 
-            # Call model again with tool results to formulate user reply
+            # Call model again with tool results to formulate user reply — instant response without heavy reasoning
             final_turn = await client.chat(
                 messages=formatted_messages,
                 system_prompt=full_system_prompt,
+                override_thinking_level=THINKING_OFF,
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 

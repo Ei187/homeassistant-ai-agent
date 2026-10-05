@@ -1606,19 +1606,26 @@ class AIAgentPanel extends HTMLElement {
                 <input type="text" class="pro-input" id="model-input" value="${s.model || 'gpt-6-astra'}" placeholder="למשל: gpt-6-astra, o3-mini, claude-3-7-sonnet..." />
               </div>
 
-              <!-- מלבן 4: רמת חשיבה -->
+              <!-- מלבן 4: רמת חשיבה ומהירות -->
               <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">⚡</div>
                   <div>
-                    <div class="card-title">4. רמת חשיבה (Reasoning)</div>
-                    <div class="card-subtitle">ירידה אוטומטית עם חיווי כשלא נתמך</div>
+                    <div class="card-title">4. רמת חשיבה ומהירות (Performance & Reasoning)</div>
+                    <div class="card-subtitle">Off = ⚡ מהירות שיא מיידית (אוברקלוק)! | Max = חשיבה כבדה</div>
                   </div>
                 </div>
                 <div class="thinking-pills">
-                  ${['off', 'low', 'medium', 'high', 'xhigh', 'max'].map((lvl) => `
-                    <div class="thinking-pill ${s.thinking_level === lvl ? 'active' : ''}" data-level="${lvl}">
-                      ${lvl === 'off' ? 'Off' : lvl.toUpperCase()}
+                  ${[
+                    { lvl: 'off', label: '⚡ Off (Turbo)' },
+                    { lvl: 'low', label: 'Low (מהיר)' },
+                    { lvl: 'medium', label: 'Medium' },
+                    { lvl: 'high', label: 'High' },
+                    { lvl: 'xhigh', label: 'X-High' },
+                    { lvl: 'max', label: '🐢 Max (כבד)' },
+                  ].map((item) => `
+                    <div class="thinking-pill ${s.thinking_level === item.lvl ? 'active' : ''}" data-level="${item.lvl}">
+                      ${item.label}
                     </div>
                   `).join('')}
                 </div>

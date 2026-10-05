@@ -60,7 +60,8 @@ class AIClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(keepalive_timeout=75, enable_cleanup_closed=True)
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     async def close(self) -> None:
@@ -131,9 +132,11 @@ class AIClient:
         messages: List[Dict[str, Any]],
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        override_thinking_level: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send chat request with automatic fallback on API error."""
-        resolved_level, fallback_notice = self.resolve_thinking_level(self.requested_thinking_level)
+        target_level = override_thinking_level or self.requested_thinking_level
+        resolved_level, fallback_notice = self.resolve_thinking_level(target_level)
 
         # Attempt call with resolved level, if provider rejects it at runtime, cascade further down
         trial_levels = [resolved_level]
