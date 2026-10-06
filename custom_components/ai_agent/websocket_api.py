@@ -390,6 +390,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "anthropic": ("Anthropic Claude", "לחיבור ישיר למודל Claude נדרש מפתח API בכפתור ה-`+`."),
                 "deepseek": ("DeepSeek", "לחיבור ישיר למודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
                 "openrouter": ("OpenRouter", "לחיבור למודלים החינמיים (:free) ב-OpenRouter הזן מפתח בכפתור ה-`+`."),
+                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
             }.get(provider, ("AI", "הזן מפתח API מתאים בכפתור ה-`+`."))
 
             reply = (
@@ -466,11 +467,12 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         # 12. User Confusion or Bot Complaints ("איזה בקשה הבנת", "בוט בלי מוח", "?")
         elif any(w in user_text for w in ["איזה בקשה", "מה הבנת", "לא הבנת", "לא ביקשתי", "בוט בלי מוח", "מטומטם", "טיפש", "למה אתה בוט"]) or user_raw.strip() in ("?", "??", "???"):
             p_title, p_desc = {
-                "openai": ("OpenAI (ChatGPT)", "באתר chatgpt.com השיחה חינם בדפדפן, אך עבור Home Assistant (תוכנה חיצונית) OpenAI דורשת מפתח API מ-platform.openai.com. (למסלול חינמי מלא ללא עלות ב-Home Assistant, בחר ב-Google Gemini למעלה!)."),
+                "openai": ("OpenAI (ChatGPT)", "באתר chatgpt.com השיחה חינם בדפדפן, אך עבור Home Assistant (תוכנה חיצונית) OpenAI דורשת מפתח API מ-platform.openai.com. (למסלול חינמי מלא ללא עלות ב-Home Assistant, בחר ב-Google Gemini או GroqCloud למעלה!)."),
                 "gemini": ("Google Gemini", "מודל Gemini 2.5 Flash חינמי לחלוטין (ללא אשראי) ב-Google AI Studio. הזן מפתח חינמי בכפתור ה-`+` כדי להפעיל שיחה חופשית מלאה."),
                 "anthropic": ("Anthropic Claude", "לחיבור מודל Claude נדרש מפתח API בכפתור ה-`+`."),
                 "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
                 "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים ב-OpenRouter נדרש מפתח בכפתור ה-`+`."),
+                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
             }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
 
             reply = (
@@ -482,11 +484,12 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
 
         else:
             p_title, p_desc = {
-                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם בדפדפן, אך קישור Home Assistant דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** (עם מפתח חינמי מ-Google AI Studio) או להזין מפתח OpenAI בכפתור ה-`+`."),
+                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם בדפדפן, אך קישור Home Assistant דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** או **GroqCloud** (מפתחות חינם לחלוטין ללא אשראי) או להזין מפתח OpenAI בכפתור ה-`+`."),
                 "gemini": ("Google Gemini", "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות! להפעלתו, הזן מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+`."),
                 "anthropic": ("Anthropic Claude", "לחיבור מודל Claude, הזן מפתח API בכפתור ה-`+`."),
                 "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek, הזן מפתח API בכפתור ה-`+`."),
                 "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים (:free) ב-OpenRouter, הזן מפתח בכפתור ה-`+`."),
+                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
             }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
 
             reply = (

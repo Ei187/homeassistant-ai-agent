@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.6.8"
+VERSION = "1.6.9"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -13,6 +13,7 @@ PROVIDER_GEMINI = "gemini"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_DEEPSEEK = "deepseek"
 PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_GROQ = "groq"
 PROVIDER_CUSTOM = "custom"
 
 PROVIDERS = [
@@ -21,6 +22,7 @@ PROVIDERS = [
     PROVIDER_ANTHROPIC,
     PROVIDER_DEEPSEEK,
     PROVIDER_OPENROUTER,
+    PROVIDER_GROQ,
     PROVIDER_CUSTOM,
 ]
 
@@ -30,6 +32,7 @@ PROVIDER_NAMES = {
     PROVIDER_ANTHROPIC: "Anthropic Claude",
     PROVIDER_DEEPSEEK: "DeepSeek",
     PROVIDER_OPENROUTER: "OpenRouter",
+    PROVIDER_GROQ: "GroqCloud (סופר מהיר וחינמי)",
     PROVIDER_CUSTOM: "שרת מקומי / Custom",
 }
 
@@ -39,6 +42,7 @@ DEFAULT_BASE_URLS = {
     PROVIDER_ANTHROPIC: "https://api.anthropic.com/v1",
     PROVIDER_DEEPSEEK: "https://api.deepseek.com/v1",
     PROVIDER_OPENROUTER: "https://openrouter.ai/api/v1",
+    PROVIDER_GROQ: "https://api.groq.com/openai/v1",
     PROVIDER_CUSTOM: "http://localhost:11434/v1",
 }
 
@@ -52,6 +56,7 @@ DEFAULT_MODELS = {
     PROVIDER_ANTHROPIC: [MODEL_AUTO, "claude-3-5-haiku-20241022", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-opus"],
     PROVIDER_DEEPSEEK: [MODEL_AUTO, "deepseek-chat", "deepseek-reasoner"],
     PROVIDER_OPENROUTER: [MODEL_AUTO, "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"],
+    PROVIDER_GROQ: [MODEL_AUTO, "llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant"],
     PROVIDER_CUSTOM: [MODEL_AUTO, "llama3.3", "qwen2.5-coder", "mistral-large"],
 }
 

@@ -17,6 +17,7 @@ from .const import (
     PROVIDER_CUSTOM,
     PROVIDER_DEEPSEEK,
     PROVIDER_GEMINI,
+    PROVIDER_GROQ,
     PROVIDER_OPENAI,
     PROVIDER_OPENROUTER,
     THINKING_HIGH,
@@ -202,7 +203,11 @@ class AIClient:
         if self.provider == PROVIDER_DEEPSEEK:
             return "deepseek-chat"
 
-        # 6. Custom / Local
+        # 6. Groq
+        if self.provider == PROVIDER_GROQ:
+            return "llama-3.3-70b-versatile"
+
+        # 7. Custom / Local
         if self.provider == PROVIDER_CUSTOM:
             fallback = "llama3.3"
             try:

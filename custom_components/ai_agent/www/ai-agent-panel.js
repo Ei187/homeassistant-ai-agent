@@ -241,6 +241,7 @@ class AIAgentPanel extends HTMLElement {
     const provName = {
       openai: 'OpenAI (ChatGPT)',
       gemini: 'Google Gemini',
+      groq: 'GroqCloud',
       anthropic: 'Anthropic Claude',
       deepseek: 'DeepSeek',
       openrouter: 'OpenRouter',
@@ -921,6 +922,7 @@ class AIAgentPanel extends HTMLElement {
     const provName = {
       openai: 'OpenAI',
       gemini: 'Google Gemini',
+      groq: 'GroqCloud',
       anthropic: 'Anthropic Claude',
       deepseek: 'DeepSeek',
       openrouter: 'OpenRouter',
@@ -1900,6 +1902,7 @@ class AIAgentPanel extends HTMLElement {
                 <select class="pro-select" id="provider-select">
                   <option value="openai" ${s.provider === 'openai' ? 'selected' : ''}>OpenAI</option>
                   <option value="gemini" ${s.provider === 'gemini' ? 'selected' : ''}>Google Gemini</option>
+                  <option value="groq" ${s.provider === 'groq' ? 'selected' : ''}>GroqCloud (סופר מהיר וחינמי)</option>
                   <option value="anthropic" ${s.provider === 'anthropic' ? 'selected' : ''}>Anthropic Claude</option>
                   <option value="deepseek" ${s.provider === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
                   <option value="openrouter" ${s.provider === 'openrouter' ? 'selected' : ''}>OpenRouter</option>
@@ -2231,5 +2234,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.8 (Free API Keys Info Modal & Clean UI)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.6.9 (Added Groq Provider & Ultra-Fast Inference)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
