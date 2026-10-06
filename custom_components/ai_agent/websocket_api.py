@@ -181,7 +181,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     """Process a user chat message through the multi-agent engine."""
     client = hass.data[DOMAIN].get("client")
     settings = hass.data[DOMAIN].get("settings", {})
-    api_key = settings.get(CONF_API_KEY, "")
+    api_key = settings.get(CONF_API_KEY, "") or (getattr(client, "api_key", "") if client else "")
+    provider = settings.get(CONF_PROVIDER, "") or (getattr(client, "provider", "") if client else "openai")
 
     agent_role = settings.get(CONF_AGENT_ROLE, "omni")
     base_prompt = AGENT_SYSTEM_PROMPTS.get(agent_role, AGENT_SYSTEM_PROMPTS["omni"])
@@ -383,12 +384,20 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
 
         # 10. Greetings & Friendly Small Talk
         elif any(w in user_text for w in ["שלום", "היי", "מה שלומך", "בוקר טוב", "ערב טוב", "מה נשמע", "מי אתה", "מה קורה", "מה המצב"]):
+            p_title, p_desc = {
+                "openai": ("OpenAI (ChatGPT)", "באתר של ChatGPT השיחה חינם דרך הדפדפן, אך עבור חיבור מערכות (API) נדרש מפתח של OpenAI. ניתן גם להזין מפתח חינמי של Google Gemini בכפתור ה-`+`."),
+                "gemini": ("Google Gemini", "מודל Google Gemini 2.5 Flash פועל ב-100% חינם ב-Google AI Studio (ללא כרטיס אשראי). הזן מפתח חינמי בכפתור ה-`+` כדי להפעיל שיחה חופשית מלאה."),
+                "anthropic": ("Anthropic Claude", "לחיבור ישיר למודל Claude נדרש מפתח API בכפתור ה-`+`."),
+                "deepseek": ("DeepSeek", "לחיבור ישיר למודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
+                "openrouter": ("OpenRouter", "לחיבור למודלים החינמיים (:free) ב-OpenRouter הזן מפתח בכפתור ה-`+`."),
+            }.get(provider, ("AI", "הזן מפתח API מתאים בכפתור ה-`+`."))
+
             reply = (
-                "שלום! שלומי מצוין, תודה רבה. 😊\n\n"
-                "אני סוכן ה-AI שלך ב-Home Assistant, מחובר לכל המכשירים, החדרים וההגדרות בבית.\n"
-                "תוכל לבקש ממני לשלוט בתאורה ובמיזוג (למשל: `כבה את האור בסלון`), לסרוק תקלות, לבנות אוטומציות או להתקין אינטגרציות מ-GitHub.\n\n"
-                "💡 **רוצה שיחה ואינטליגנציה מקסימלית כמו באתר של Gemini?**\n"
-                "כדי להפעיל את מודל **Google Gemini 2.5 Flash** (שפועל ב-100% חינם ב-Google AI Studio), לחץ על כפתור ה-`+` והזן מפתח API חינמי!"
+                f"שלום! שלומי מצוין, תודה רבה. 😊\n\n"
+                f"אני סוכן ה-AI שלך ב-Home Assistant (ספק מוגדר: **{p_title}**), מחובר לכל המכשירים, החדרים וההגדרות בבית.\n"
+                f"תוכל לבקש ממני לשלוט בתאורה ובמיזוג (למשל: `כבה את האור בסלון`), לסרוק תקלות, לבנות אוטומציות או להתקין אינטגרציות מ-GitHub.\n\n"
+                f"💡 **רוצה שיחה ואינטליגנציה מקסימלית בשפה חופשית?**\n"
+                f"{p_desc}"
             )
 
         # 11. System Improvement & Architecture Suggestions
@@ -455,12 +464,19 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             reply = "\n\n".join(suggestions)
 
         else:
+            p_title, p_desc = {
+                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם, אך קישור API דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** (עם מפתח חינמי מ-Google AI Studio) או להזין מפתח OpenAI בכפתור ה-`+`."),
+                "gemini": ("Google Gemini", "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות! להפעלתו, הזן מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+`."),
+                "anthropic": ("Anthropic Claude", "לחיבור מודל Claude, הזן מפתח API בכפתור ה-`+`."),
+                "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek, הזן מפתח API בכפתור ה-`+`."),
+                "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים (:free) ב-OpenRouter, הזן מפתח בכפתור ה-`+`."),
+            }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
+
             reply = (
                 f"הבנתי את בקשתך: '{user_raw}'.\n\n"
-                "אני מחובר ישירות ל-Home Assistant ומסוגל לבצע שליטה במכשירים, בניית אוטומציות, סריקת לוגים, חיפוש והתקנת אינטגרציות מ-GitHub.\n\n"
-                "🧠 **לשיחה חופשית ואינטליגנציה מלאה כמו באתר של Gemini:**\n"
-                "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות!\n"
-                "כדי ש-Home Assistant יוכל לתקשר עם השרתים החינמיים של גוגל, יש צורך בהזנת מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+` למטה. ברגע שהמפתח מוגדר, כל שיחה מתבצעת ברמת אינטליגנציה מקסימלית."
+                f"אני מחובר ישירות ל-Home Assistant ומסוגל לבצע שליטה במכשירים, בניית אוטומציות, סריקת לוגים, חיפוש והתקנת אינטגרציות מ-GitHub.\n\n"
+                f"🧠 **לשיחה חופשית ואינטליגנציה מלאה של {p_title}:**\n"
+                f"{p_desc}"
             )
 
         # Stream free tier response smoothly in real-time

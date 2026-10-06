@@ -211,15 +211,35 @@ class AIAgentPanel extends HTMLElement {
     }
   }
 
+  getProviderKeyHint(prov) {
+    const p = prov || this.settings?.provider || 'openai';
+    if (p === 'gemini') {
+      return `🎁 <b>Google Gemini:</b> מודל Gemini 2.5 Flash חינמי לחלוטין (ללא אשראי) ב-Google AI Studio: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">לחץ כאן להפקת מפתח חינם</a>`;
+    }
+    if (p === 'openai') {
+      return `ℹ️ <b>OpenAI:</b> דורש מפתח מ-<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">platform.openai.com</a>. (באתר chatgpt.com השיחה חינם, אך ה-API דורש מפתח. למסלול חינמי ב-Home Assistant ללא עלות, בחר ב-<b>Google Gemini</b> למעלה!).`;
+    }
+    if (p === 'anthropic') {
+      return `ℹ️ <b>Anthropic Claude:</b> דורש מפתח מ-<a href="https://console.anthropic.com/" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">console.anthropic.com</a>.`;
+    }
+    if (p === 'deepseek') {
+      return `ℹ️ <b>DeepSeek:</b> דורש מפתח מ-<a href="https://platform.deepseek.com/" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">platform.deepseek.com</a>.`;
+    }
+    if (p === 'openrouter') {
+      return `🎁 <b>OpenRouter:</b> דורש מפתח מ-<a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">openrouter.ai</a> (כולל מודלים חינמיים המסומנים :free).`;
+    }
+    return `ℹ️ שרת מקומי (Ollama/LM Studio): ללא צורך במפתח אם השרת מוגדר ללא אימות.`;
+  }
+
   updateHeaderStatusPill() {
     const root = this.shadowRoot;
     if (!root) return;
     const pill = root.querySelector('#status-pill-btn');
     if (!pill) return;
     const s = this.settings;
-    const isFreeMode = !s.api_key;
+    const hasKey = !!(s.api_key && s.api_key.trim());
     const provName = {
-      openai: 'OpenAI',
+      openai: 'OpenAI (ChatGPT)',
       gemini: 'Google Gemini',
       anthropic: 'Anthropic Claude',
       deepseek: 'DeepSeek',
@@ -237,9 +257,14 @@ class AIAgentPanel extends HTMLElement {
       }
     }
 
+    const dotColor = hasKey ? '#0a84ff' : '#ff9f0a';
+    const statusText = hasKey
+      ? `${provName} • ${modelDisplay}`
+      : `מצב מקומי (${provName} - חסר API Key)`;
+
     pill.innerHTML = `
-      <div class="dot-indicator" style="background: ${isFreeMode ? '#30d158' : '#0a84ff'}; box-shadow: 0 0 8px ${isFreeMode ? '#30d158' : '#0a84ff'};"></div>
-      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${provName} • ${modelDisplay}`}</span>
+      <div class="dot-indicator" style="background: ${dotColor}; box-shadow: 0 0 8px ${dotColor};"></div>
+      <span>${statusText}</span>
       <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${(s.thinking_level || 'off').toUpperCase()})</span>
       <span style="margin-right: 4px;">⚙️</span>
     `;
@@ -1900,17 +1925,17 @@ class AIAgentPanel extends HTMLElement {
                 </div>
               </div>
 
-              <!-- מלבן 5: API Key (אופציונלי למצב חינמי) -->
+              <!-- מלבן 5: API Key -->
               <div class="pro-card">
                 <div class="card-header">
                   <div class="card-icon">🔑</div>
                   <div>
                     <div class="card-title">5. מפתח API (API Key)</div>
-                    <div class="card-subtitle">השאר ריק למצב חינמי בסיסי</div>
+                    <div class="card-subtitle">נדרש לחיבור ענן (ללא מפתח: פקודות בית מקומיות בלבד)</div>
                   </div>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
-                  <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API (אופציונלי)..." value="${s.api_key || ''}" style="flex: 1;" />
+                  <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API..." value="${s.api_key || ''}" style="flex: 1;" />
                   <button type="button" id="toggle-key-visibility-btn" title="הצג / הסתר מפתח API" style="
                     background: rgba(255, 255, 255, 0.08);
                     border: 1px solid rgba(255, 255, 255, 0.15);
@@ -1930,12 +1955,8 @@ class AIAgentPanel extends HTMLElement {
                     👁️
                   </button>
                 </div>
-                <div style="font-size: 11.5px; color: #a1a1a6; margin-top: 8px; line-height: 1.5;">
-                  לחיבור המודל החינמי העדכני של גוגל (כמו באתר Gemini):
-                  <br/>
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">
-                    🎁 לחץ כאן להפקת מפתח Google Gemini בחינם (ללא אשראי)
-                  </a>
+                <div id="provider-key-hint" style="font-size: 11.5px; color: #a1a1a6; margin-top: 8px; line-height: 1.5;">
+                  ${this.getProviderKeyHint(s.provider)}
                 </div>
               </div>
             </div>
@@ -2030,6 +2051,10 @@ class AIAgentPanel extends HTMLElement {
           autoBadgeBtn.style.borderColor = '#0a84ff';
           autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
         }
+        const keyHintEl = root.querySelector('#provider-key-hint');
+        if (keyHintEl) {
+          keyHintEl.innerHTML = this.getProviderKeyHint(prov);
+        }
         this.updateHeaderStatusPill();
       };
     }
@@ -2070,6 +2095,7 @@ class AIAgentPanel extends HTMLElement {
         if (keyInp) this.settings.api_key = keyInp.value.trim();
         if (activePill) this.settings.thinking_level = activePill.getAttribute('data-level');
 
+        this.updateHeaderStatusPill();
         this.saveSettings();
       };
     }
@@ -2124,5 +2150,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.5 (Smart System Suggestions & Auto-Latest)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.6.6 (Dynamic Provider Context & Smart Diagnostics)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
