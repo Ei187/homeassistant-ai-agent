@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -42,14 +42,17 @@ DEFAULT_BASE_URLS = {
     PROVIDER_CUSTOM: "http://localhost:11434/v1",
 }
 
+# Auto Model Identifier
+MODEL_AUTO = "auto-latest"
+
 # Default Known Models (User can freely type/paste ANY model)
 DEFAULT_MODELS = {
-    PROVIDER_OPENAI: ["gpt-4o-mini", "gpt-4o", "o3-mini", "o1", "gpt-6-astra"],
-    PROVIDER_GEMINI: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"],
-    PROVIDER_ANTHROPIC: ["claude-3-5-haiku-20241022", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-opus"],
-    PROVIDER_DEEPSEEK: ["deepseek-chat", "deepseek-reasoner"],
-    PROVIDER_OPENROUTER: ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"],
-    PROVIDER_CUSTOM: ["llama3.3", "qwen2.5-coder", "mistral-large"],
+    PROVIDER_OPENAI: [MODEL_AUTO, "gpt-4o-mini", "gpt-4o", "o3-mini", "o1", "gpt-6-astra"],
+    PROVIDER_GEMINI: [MODEL_AUTO, "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"],
+    PROVIDER_ANTHROPIC: [MODEL_AUTO, "claude-3-5-haiku-20241022", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-opus"],
+    PROVIDER_DEEPSEEK: [MODEL_AUTO, "deepseek-chat", "deepseek-reasoner"],
+    PROVIDER_OPENROUTER: [MODEL_AUTO, "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"],
+    PROVIDER_CUSTOM: [MODEL_AUTO, "llama3.3", "qwen2.5-coder", "mistral-large"],
 }
 
 # Thinking / Reasoning Levels
@@ -382,7 +385,7 @@ CONF_MOBILE_NOTIFY_SERVICE = "mobile_notify_service"
 
 DEFAULT_SETTINGS = {
     CONF_PROVIDER: PROVIDER_OPENAI,
-    CONF_MODEL: "gpt-6-astra",
+    CONF_MODEL: MODEL_AUTO,
     CONF_API_KEY: "",
     CONF_BASE_URL: DEFAULT_BASE_URLS[PROVIDER_OPENAI],
     CONF_THINKING_LEVEL: THINKING_HIGH,

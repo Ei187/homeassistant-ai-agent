@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import aiohttp
@@ -51,12 +53,14 @@ class AIClient:
         session: Optional[aiohttp.ClientSession] = None,
     ) -> None:
         self.provider = provider
-        self.model = model.strip()
+        self.model = model.strip() if model else ""
         self.api_key = api_key.strip()
         self.base_url = base_url.rstrip("/")
         self.requested_thinking_level = thinking_level
         self._session = session
         self._external_session = session is not None
+        self._resolved_model_cache: Optional[str] = None
+        self._resolved_model_timestamp: float = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -68,15 +72,149 @@ class AIClient:
         if not self._external_session and self._session and not self._session.closed:
             await self._session.close()
 
-    def get_supported_thinking_levels(self) -> List[str]:
+    def is_auto_model(self, model_name: Optional[str] = None) -> bool:
+        """Check if model is set to auto-latest."""
+        target = (model_name if model_name is not None else self.model).strip().lower()
+        return not target or target in ("auto-latest", "auto", "default")
+
+    async def resolve_active_model(self) -> str:
+        """Resolve active model dynamically if auto-latest is requested, cached for 3 hours."""
+        if not self.is_auto_model():
+            return self.model
+
+        now = time.time()
+        # 3 hours TTL cache (10800 seconds)
+        if self._resolved_model_cache and (now - self._resolved_model_timestamp) < (3 * 3600):
+            return self._resolved_model_cache
+
+        resolved = await self._discover_latest_model()
+        self._resolved_model_cache = resolved
+        self._resolved_model_timestamp = now
+        _LOGGER.info("Resolved auto-latest model for provider '%s': %s", self.provider, resolved)
+        return resolved
+
+    async def _discover_latest_model(self) -> str:
+        """Discover the latest available model for the active provider."""
+        # 1. Google Gemini
+        if self.provider == PROVIDER_GEMINI:
+            fallback = "gemini-2.5-flash"
+            if not self.api_key:
+                return fallback
+            try:
+                session = await self._get_session()
+                base = self.base_url or "https://generativelanguage.googleapis.com"
+                url = f"{base}/v1beta/models?key={self.api_key}"
+                async with session.get(url, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        models = data.get("models", [])
+                        flash_candidates: List[str] = []
+                        for m in models:
+                            m_name = m.get("name", "").replace("models/", "")
+                            methods = m.get("supportedGenerationMethods", [])
+                            if "generateContent" in methods and "flash" in m_name.lower():
+                                low = m_name.lower()
+                                if any(x in low for x in ("embedding", "aqa", "realtime", "imagen", "robotics")):
+                                    continue
+                                flash_candidates.append(m_name)
+
+                        if flash_candidates:
+                            def _gemini_version_key(name: str) -> Tuple[float, int]:
+                                matches = re.findall(r"(\d+(?:\.\d+)?)", name)
+                                nums = [float(x) for x in matches] if matches else [0.0]
+                                is_preview = 0 if ("preview" in name.lower() or "exp" in name.lower()) else 1
+                                return (nums[0] if nums else 0.0, is_preview)
+
+                            flash_candidates.sort(key=_gemini_version_key, reverse=True)
+                            return flash_candidates[0]
+            except Exception as err:
+                _LOGGER.warning("Failed to discover latest Gemini model (%s), using fallback %s", err, fallback)
+            return fallback
+
+        # 2. OpenRouter
+        if self.provider == PROVIDER_OPENROUTER:
+            fallback = "openrouter/auto"
+            try:
+                session = await self._get_session()
+                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+                url = "https://openrouter.ai/api/v1/models"
+                async with session.get(url, headers=headers, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw_models = data.get("data", [])
+                        free_models = [m for m in raw_models if str(m.get("id", "")).endswith(":free")]
+                        if free_models:
+                            def _openrouter_score(m: Dict[str, Any]) -> Tuple[int, int]:
+                                mid = str(m.get("id", "")).lower()
+                                score = 0
+                                if "gemini" in mid:
+                                    score += 100
+                                    if "2.5" in mid:
+                                        score += 50
+                                    elif "2.0" in mid:
+                                        score += 40
+                                elif "google/" in mid or "gemma" in mid:
+                                    score += 90
+                                elif "llama" in mid:
+                                    score += 80
+                                elif "deepseek" in mid:
+                                    score += 70
+                                elif "qwen" in mid:
+                                    score += 60
+                                created = int(m.get("created", 0) or 0)
+                                return (score, created)
+
+                            free_models.sort(key=_openrouter_score, reverse=True)
+                            return str(free_models[0]["id"])
+            except Exception as err:
+                _LOGGER.warning("Failed to discover OpenRouter free model (%s), using fallback %s", err, fallback)
+            return fallback
+
+        # 3. OpenAI
+        if self.provider == PROVIDER_OPENAI:
+            return "chatgpt-4o-latest"
+
+        # 4. Anthropic Claude
+        if self.provider == PROVIDER_ANTHROPIC:
+            return "claude-3-7-sonnet-latest"
+
+        # 5. DeepSeek
+        if self.provider == PROVIDER_DEEPSEEK:
+            return "deepseek-chat"
+
+        # 6. Custom / Local
+        if self.provider == PROVIDER_CUSTOM:
+            fallback = "llama3.3"
+            try:
+                session = await self._get_session()
+                url = f"{self.base_url}/models"
+                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+                async with session.get(url, headers=headers, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        models = data.get("data") or data.get("models") or []
+                        if models and isinstance(models, list):
+                            first = models[0]
+                            if isinstance(first, dict):
+                                return str(first.get("id") or first.get("name") or fallback)
+                            if isinstance(first, str):
+                                return first
+            except Exception as err:
+                _LOGGER.debug("Custom endpoint models query failed (%s), using fallback %s", err, fallback)
+            return fallback
+
+        return self.model or "gpt-4o-mini"
+
+    def get_supported_thinking_levels(self, model_name: Optional[str] = None) -> List[str]:
         """Return list of supported thinking levels for current provider/model."""
-        model_lower = self.model.lower()
+        target_model = model_name or self._resolved_model_cache or self.model
+        model_lower = target_model.lower()
 
         # OpenAI
         if self.provider == PROVIDER_OPENAI:
             if any(k in model_lower for k in ["o1", "o3", "astra", "gpt-6"]):
                 return [THINKING_OFF, THINKING_LOW, THINKING_MEDIUM, THINKING_HIGH, THINKING_XHIGH, THINKING_MAX]
-            # Standard GPT-4o / GPT-4o-mini don't have reasoning_effort
+            # Standard GPT-4o / GPT-4o-mini / chatgpt-4o-latest don't have reasoning_effort
             return [THINKING_OFF]
 
         # Anthropic Claude
@@ -100,9 +238,10 @@ class AIClient:
         # OpenRouter / Custom: Assume flexible
         return [THINKING_OFF, THINKING_LOW, THINKING_MEDIUM, THINKING_HIGH, THINKING_XHIGH, THINKING_MAX]
 
-    def resolve_thinking_level(self, requested: str) -> Tuple[str, Optional[str]]:
+    def resolve_thinking_level(self, requested: str, model_name: Optional[str] = None) -> Tuple[str, Optional[str]]:
         """Resolve requested thinking level with graceful cascade and user notification."""
-        supported = self.get_supported_thinking_levels()
+        target_model = model_name or self._resolved_model_cache or self.model
+        supported = self.get_supported_thinking_levels(target_model)
 
         if requested in supported:
             return requested, None
@@ -114,7 +253,7 @@ class AIClient:
                 req_name = THINKING_LEVEL_NAMES.get(requested, requested)
                 act_name = THINKING_LEVEL_NAMES.get(level, level)
                 notice = (
-                    f"ℹ️ **התאמת רמת חשיבה:** המודל `{self.model}` אינו תומך ברמת חשיבה '{req_name}'. "
+                    f"ℹ️ **התאמת רמת חשיבה:** המודל `{target_model}` אינו תומך ברמת חשיבה '{req_name}'. "
                     f"המערכת התאימה אוטומטית לרמה הנתמכת הגבוהה ביותר: **{act_name}**."
                 )
                 return level, notice
@@ -122,7 +261,7 @@ class AIClient:
         fallback = THINKING_OFF
         req_name = THINKING_LEVEL_NAMES.get(requested, requested)
         notice = (
-            f"ℹ️ **התאמת רמת חשיבה:** המודל `{self.model}` אינו תומך במנגנון חשיבה מורחב. "
+            f"ℹ️ **התאמת רמת חשיבה:** המודל `{target_model}` אינו תומך במנגנון חשיבה מורחב. "
             f"הופעל במצב ישיר (כבוי)."
         )
         return fallback, notice
@@ -136,8 +275,9 @@ class AIClient:
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Send chat request with automatic fallback on API error."""
+        active_model = await self.resolve_active_model()
         target_level = override_thinking_level or self.requested_thinking_level
-        resolved_level, fallback_notice = self.resolve_thinking_level(target_level)
+        resolved_level, fallback_notice = self.resolve_thinking_level(target_level, model_name=active_model)
 
         # Attempt call with resolved level, if provider rejects it at runtime, cascade further down
         trial_levels = [resolved_level]
@@ -148,24 +288,27 @@ class AIClient:
         last_error = None
         for level in trial_levels:
             try:
-                result = await self._execute_chat(messages, system_prompt, tools, thinking_level=level, on_chunk=on_chunk)
+                result = await self._execute_chat(
+                    messages, system_prompt, tools, thinking_level=level, on_chunk=on_chunk, active_model=active_model
+                )
                 # If we had to drop down further at runtime
                 if level != resolved_level:
                     req_name = THINKING_LEVEL_NAMES.get(self.requested_thinking_level, self.requested_thinking_level)
                     act_name = THINKING_LEVEL_NAMES.get(level, level)
                     fallback_notice = (
-                        f"ℹ️ **התאמת רמת חשיבה בזמן ריצה:** המודל `{self.model}` דיווח על אי-תמיכה ברמה זו. "
+                        f"ℹ️ **התאמת רמת חשיבה בזמן ריצה:** המודל `{active_model}` דיווח על אי-תמיכה ברמה זו. "
                         f"בוצעה ירידה אוטומטית לרמת **{act_name}**."
                     )
                 result["fallback_notice"] = fallback_notice
                 result["actual_thinking_level"] = level
+                result["actual_model"] = active_model
                 return result
             except aiohttp.ClientResponseError as err:
                 last_error = err
                 err_text = f"{err} {getattr(err, 'message', '')}".lower()
                 # If error is related to unsupported reasoning_effort or parameter, continue fallback
                 if err.status == 400 and ("reasoning" in err_text or "thinking" in err_text or "effort" in err_text):
-                    _LOGGER.warning("Thinking level '%s' rejected by API for model '%s', falling back", level, self.model)
+                    _LOGGER.warning("Thinking level '%s' rejected by API for model '%s', falling back", level, active_model)
                     continue
                 raise
             except Exception as err:
@@ -173,15 +316,16 @@ class AIClient:
                 err_text = str(err).lower()
                 # Check message text for reasoning error
                 if "reasoning" in err_text or "thinking" in err_text or "effort" in err_text:
-                    _LOGGER.warning("Thinking level '%s' error for model '%s': %s, falling back", level, self.model, err)
+                    _LOGGER.warning("Thinking level '%s' error for model '%s': %s, falling back", level, active_model, err)
                     continue
                 raise
 
         _LOGGER.error("All thinking level fallbacks failed: %s", last_error)
         return {
-            "content": f"⚠️ לא ניתן היה לקבל מענה מהמודל `{self.model}`: {last_error}",
+            "content": f"⚠️ לא ניתן היה לקבל מענה מהמודל `{active_model}`: {last_error}",
             "tool_calls": [],
             "raw": {},
+            "actual_model": active_model,
         }
 
     async def _execute_chat(
@@ -191,26 +335,37 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        active_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Internal dispatch to appropriate provider API."""
+        target_model = active_model or await self.resolve_active_model()
         if self.provider == PROVIDER_ANTHROPIC:
-            return await self._call_anthropic(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
-        if self.provider == PROVIDER_GEMINI and not self.base_url.endswith("/v1"):
-            return await self._call_gemini_native(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+            res = await self._call_anthropic(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+        elif self.provider == PROVIDER_GEMINI and not self.base_url.endswith("/v1"):
+            res = await self._call_gemini_native(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
         # Default OpenAI-compatible endpoint (OpenAI, DeepSeek, OpenRouter, Custom, or Gemini OpenAI compatibility)
-        if self.provider == PROVIDER_OPENAI and "api.openai.com" in self.base_url:
+        elif self.provider == PROVIDER_OPENAI and "api.openai.com" in self.base_url:
             # If fast response or streaming requested, prefer standard /v1/chat/completions with SSE
             if on_chunk is not None or thinking_level == THINKING_OFF:
                 try:
-                    return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
                 except Exception as err:
                     _LOGGER.warning("OpenAI streaming chat/completions failed (%s). Falling back to responses API.", err)
-            try:
-                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
-            except Exception as err:
-                _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
-                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
-        return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+                    res = None
+            else:
+                res = None
+
+            if res is None:
+                try:
+                    res = await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+                except Exception as err:
+                    _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
+                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+        else:
+            res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+
+        res["actual_model"] = target_model
+        return res
 
     async def _call_openai_responses(
         self,
@@ -219,9 +374,11 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Call OpenAI /v1/responses (supports function tools + reasoning together)."""
         session = await self._get_session()
+        target_model = model_name or self.model
         url = f"{self.base_url}/responses"
         headers = {
             "Content-Type": "application/json",
@@ -272,7 +429,7 @@ class AIClient:
             input_items.append({"role": role, "content": _text(m.get("content"))})
 
         payload: Dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "input": input_items,
             "store": False,
         }
@@ -399,7 +556,7 @@ class AIClient:
                 payload.pop("reasoning", None)
             else:
                 payload["reasoning"] = {"effort": next_eff}
-            _LOGGER.info("Responses API: retrying model '%s' with reasoning effort=%s", self.model, next_eff)
+            _LOGGER.info("Responses API: retrying model '%s' with reasoning effort=%s", target_model, next_eff)
 
         if data is None:
             raise aiohttp.ClientResponseError(
@@ -436,9 +593,11 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Call standard OpenAI compatible endpoint."""
         session = await self._get_session()
+        target_model = model_name or self.model
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -451,7 +610,7 @@ class AIClient:
         formatted_messages.extend(messages)
 
         payload: Dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "messages": formatted_messages,
         }
 
@@ -539,7 +698,7 @@ class AIClient:
             low = err_text.lower()
             if "/v1/responses" in low:
                 _LOGGER.info("API advised using /v1/responses endpoint. Redirecting to _call_openai_responses.")
-                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk)
+                return await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
             if "reasoning_effort" not in low:
                 break
 
@@ -561,7 +720,7 @@ class AIClient:
                     break
 
             tried.add(next_effort)
-            _LOGGER.info("Model '%s': retrying with reasoning_effort=%s", self.model, next_effort)
+            _LOGGER.info("Model '%s': retrying with reasoning_effort=%s", target_model, next_effort)
             if next_effort is None:
                 payload.pop("reasoning_effort", None)
             else:
@@ -590,9 +749,11 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Call Anthropic Claude API."""
         session = await self._get_session()
+        target_model = model_name or self.model
         url = f"{self.base_url}/messages"
         headers = {
             "Content-Type": "application/json",
@@ -638,7 +799,7 @@ class AIClient:
                 })
 
         payload: Dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "messages": formatted_messages,
             "max_tokens": 4096,
         }
@@ -748,11 +909,13 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]],
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Call Google Gemini REST API."""
         session = await self._get_session()
+        target_model = (model_name or self.model).replace("models/", "")
         method_name = "streamGenerateContent?alt=sse&key=" if on_chunk else "generateContent?key="
-        url = f"{self.base_url}/v1beta/models/{self.model}:{method_name}{self.api_key}"
+        url = f"{self.base_url}/v1beta/models/{target_model}:{method_name}{self.api_key}"
         headers = {"Content-Type": "application/json"}
 
         contents = []

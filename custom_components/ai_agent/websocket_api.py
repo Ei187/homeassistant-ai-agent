@@ -404,6 +404,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                     "reply": reply,
                     "fallback_notice": None,
                     "actual_thinking_level": "free",
+                    "actual_model": "free-engine",
                     "proposals": proposals,
                 },
             )
@@ -414,6 +415,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "reply": reply,
                 "fallback_notice": None,
                 "actual_thinking_level": "free",
+                "actual_model": "free-engine",
                 "proposals": proposals,
             },
         )
@@ -505,6 +507,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 
+        actual_model = response.get("actual_model") or getattr(client, "model", "")
         connection.send_message(
             websocket_api.event_message(
                 msg["id"],
@@ -513,6 +516,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                     "reply": content,
                     "fallback_notice": fallback_notice,
                     "actual_thinking_level": actual_level,
+                    "actual_model": actual_model,
                     "proposals": proposals,
                 },
             )
@@ -523,6 +527,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "reply": content,
                 "fallback_notice": fallback_notice,
                 "actual_thinking_level": actual_level,
+                "actual_model": actual_model,
                 "proposals": proposals,
             },
         )

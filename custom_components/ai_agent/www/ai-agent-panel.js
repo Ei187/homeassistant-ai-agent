@@ -10,6 +10,7 @@ class AIAgentPanel extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.hass = null;
     this.settings = this.loadCachedSettings();
+    this.resolvedModel = localStorage.getItem('ai_agent_pro_resolved_model') || '';
     this.chatHistory = this.loadChatHistory();
     this.pendingProposals = [];
     this.isLoading = false;
@@ -23,7 +24,7 @@ class AIAgentPanel extends HTMLElement {
     const defaults = {
       agent_role: 'omni',
       provider: 'openai',
-      model: 'gpt-6-astra',
+      model: 'auto-latest',
       thinking_level: 'high',
       require_approval: true,
       api_key: '',
@@ -128,6 +129,15 @@ class AIAgentPanel extends HTMLElement {
     if (modelInp && this.settings.model) modelInp.value = this.settings.model;
     if (keyInp) keyInp.value = this.settings.api_key || '';
 
+    const autoBadgeBtn = root.querySelector('#auto-model-badge-btn');
+    if (autoBadgeBtn) {
+      const curModel = (modelInp ? modelInp.value : this.settings.model) || '';
+      const isAuto = (!curModel || curModel.trim() === 'auto-latest' || curModel.trim() === 'auto');
+      autoBadgeBtn.style.background = isAuto ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)';
+      autoBadgeBtn.style.borderColor = isAuto ? '#0a84ff' : 'rgba(255, 255, 255, 0.16)';
+      autoBadgeBtn.style.boxShadow = isAuto ? '0 4px 14px rgba(10, 132, 255, 0.35)' : 'none';
+    }
+
     root.querySelectorAll('.thinking-pill').forEach((pill) => {
       const lvl = pill.getAttribute('data-level');
       pill.classList.toggle('active', lvl === this.settings.thinking_level);
@@ -180,9 +190,18 @@ class AIAgentPanel extends HTMLElement {
       custom: 'Custom',
     }[s.provider] || s.provider;
 
+    let modelDisplay = s.model || 'auto-latest';
+    if (modelDisplay === 'auto-latest' || modelDisplay === 'auto' || !modelDisplay) {
+      if (this.resolvedModel && this.resolvedModel !== 'free-engine') {
+        modelDisplay = `Auto (${this.resolvedModel})`;
+      } else {
+        modelDisplay = 'Auto';
+      }
+    }
+
     pill.innerHTML = `
       <div class="dot-indicator" style="background: ${isFreeMode ? '#30d158' : '#0a84ff'}; box-shadow: 0 0 8px ${isFreeMode ? '#30d158' : '#0a84ff'};"></div>
-      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${provName} • ${s.model}`}</span>
+      <span>${isFreeMode ? 'מצב חינמי פעיל' : `${provName} • ${modelDisplay}`}</span>
       <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${(s.thinking_level || 'off').toUpperCase()})</span>
       <span style="margin-right: 4px;">⚙️</span>
     `;
@@ -363,6 +382,11 @@ class AIAgentPanel extends HTMLElement {
               doneReply = event.reply || targetText;
               doneProposals = event.proposals || [];
               doneFallbackNotice = event.fallback_notice || null;
+              if (event.actual_model && event.actual_model !== 'free-engine') {
+                this.resolvedModel = event.actual_model;
+                try { localStorage.setItem('ai_agent_pro_resolved_model', event.actual_model); } catch (_) {}
+                this.updateHeaderStatusPill();
+              }
               if (targetText.length === 0 && doneReply) {
                 // If chunks were buffered by network, type entire reply via typewriter
                 targetText = doneReply;
@@ -392,6 +416,11 @@ class AIAgentPanel extends HTMLElement {
         doneReply = res.reply || '';
         doneProposals = res.proposals || [];
         doneFallbackNotice = res.fallback_notice || null;
+        if (res.actual_model && res.actual_model !== 'free-engine') {
+          this.resolvedModel = res.actual_model;
+          try { localStorage.setItem('ai_agent_pro_resolved_model', res.actual_model); } catch (_) {}
+          this.updateHeaderStatusPill();
+        }
         targetText = doneReply;
         startTypewriter();
       }
@@ -827,6 +856,23 @@ class AIAgentPanel extends HTMLElement {
   render(preserveScroll = true) {
     const s = this.settings;
     const isFreeMode = !s.api_key;
+    const provName = {
+      openai: 'OpenAI',
+      gemini: 'Google Gemini',
+      anthropic: 'Anthropic Claude',
+      deepseek: 'DeepSeek',
+      openrouter: 'OpenRouter',
+      custom: 'Custom',
+    }[s.provider] || s.provider;
+
+    let modelDisplay = s.model || 'auto-latest';
+    if (modelDisplay === 'auto-latest' || modelDisplay === 'auto' || !modelDisplay) {
+      if (this.resolvedModel && this.resolvedModel !== 'free-engine') {
+        modelDisplay = `Auto (${this.resolvedModel})`;
+      } else {
+        modelDisplay = 'Auto';
+      }
+    }
 
     // After first full render, only update the messages section to avoid scroll jump
     if (this._rendered && this.shadowRoot && this.shadowRoot.querySelector('#chat-scroll')) {
@@ -1695,7 +1741,7 @@ class AIAgentPanel extends HTMLElement {
             <!-- Clickable Status Pill that opens the + drawer -->
             <div class="status-pill-badge" id="status-pill-btn" title="לחץ לשינוי ספק, מודל וחשיבה">
               <div class="dot-indicator"></div>
-              <span>${isFreeMode ? 'מצב חינמי פעיל' : `${s.provider} • ${s.model}`}</span>
+              <span>${isFreeMode ? 'מצב חינמי פעיל' : `${provName} • ${modelDisplay}`}</span>
               <span style="font-size: 11px; opacity: 0.7;">(חשיבה: ${s.thinking_level.toUpperCase()})</span>
               <span style="margin-right: 4px;">⚙️</span>
             </div>
@@ -1760,11 +1806,35 @@ class AIAgentPanel extends HTMLElement {
                 <div class="card-header">
                   <div class="card-icon">🧠</div>
                   <div>
-                    <div class="card-title">3. בחירת מודל (פתוח)</div>
-                    <div class="card-subtitle">הקלד או הדבק כל שם מודל</div>
+                    <div class="card-title">3. בחירת מודל</div>
+                    <div class="card-subtitle">מודל עדכני אוטומטי או הקלדה חופשית</div>
                   </div>
                 </div>
-                <input type="text" class="pro-input" id="model-input" value="${s.model || 'gpt-6-astra'}" placeholder="למשל: gpt-6-astra, o3-mini, claude-3-7-sonnet..." />
+                <button type="button" id="auto-model-badge-btn" title="בחר מודל עדכני ביותר אוטומטית לפי הספק" style="
+                  width: 100%;
+                  margin-bottom: 10px;
+                  background: ${(!s.model || s.model === 'auto-latest' || s.model === 'auto') ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)'};
+                  border: 1.5px solid ${(!s.model || s.model === 'auto-latest' || s.model === 'auto') ? '#0a84ff' : 'rgba(255, 255, 255, 0.16)'};
+                  color: #ffffff;
+                  border-radius: 12px;
+                  padding: 10px 14px;
+                  font-size: 13px;
+                  font-weight: 600;
+                  cursor: pointer;
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+                  outline: none;
+                  box-sizing: border-box;
+                  box-shadow: ${(!s.model || s.model === 'auto-latest' || s.model === 'auto') ? '0 4px 14px rgba(10, 132, 255, 0.35)' : 'none'};
+                ">
+                  <span style="display: flex; align-items: center; gap: 6px;">
+                    ✨ מודל עדכני ביותר (אוטומטי)
+                  </span>
+                  <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 3px 8px; border-radius: 6px; font-family: monospace;">auto-latest</span>
+                </button>
+                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, o3-mini..." />
               </div>
 
               <!-- מלבן 4: רמת חשיבה ומהירות -->
@@ -1887,22 +1957,40 @@ class AIAgentPanel extends HTMLElement {
       };
     });
 
-    // Provider onchange helper: suggest default model when provider changes
+    // Auto Model Badge Button
+    const autoBadgeBtn = root.querySelector('#auto-model-badge-btn');
+    const modelInp = root.querySelector('#model-input');
+    if (autoBadgeBtn && modelInp) {
+      const updateBadgeVisual = () => {
+        const val = modelInp.value.trim();
+        const isAuto = (!val || val === 'auto-latest' || val === 'auto');
+        autoBadgeBtn.style.background = isAuto ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)';
+        autoBadgeBtn.style.borderColor = isAuto ? '#0a84ff' : 'rgba(255, 255, 255, 0.16)';
+        autoBadgeBtn.style.boxShadow = isAuto ? '0 4px 14px rgba(10, 132, 255, 0.35)' : 'none';
+      };
+      autoBadgeBtn.onclick = (e) => {
+        e.preventDefault();
+        modelInp.value = 'auto-latest';
+        this.settings.model = 'auto-latest';
+        updateBadgeVisual();
+      };
+      modelInp.addEventListener('input', updateBadgeVisual);
+    }
+
+    // Provider onchange helper: suggest auto-latest when provider changes
     const provSel = root.querySelector('#provider-select');
     if (provSel) {
       provSel.onchange = () => {
         const prov = provSel.value;
-        const modelInp = root.querySelector('#model-input');
-        const defaultModels = {
-          openai: 'gpt-4o-mini',
-          gemini: 'gemini-2.5-flash',
-          anthropic: 'claude-3-5-haiku-20241022',
-          deepseek: 'deepseek-chat',
-          openrouter: 'google/gemini-2.0-flash-exp:free',
-          custom: 'llama3.3',
-        };
-        if (modelInp && defaultModels[prov]) {
-          modelInp.value = defaultModels[prov];
+        if (modelInp) {
+          modelInp.value = 'auto-latest';
+        }
+        this.settings.provider = prov;
+        this.settings.model = 'auto-latest';
+        if (autoBadgeBtn) {
+          autoBadgeBtn.style.background = 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))';
+          autoBadgeBtn.style.borderColor = '#0a84ff';
+          autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
         }
       };
     }
@@ -1997,5 +2085,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.3 (Area Intelligence & Latest Free Models)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.6.4 (Auto-Latest Model Resolution Engine)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
