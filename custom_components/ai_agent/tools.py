@@ -1822,7 +1822,7 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
         return {"success": False, "error": f"שגיאה בהפעלת השינוי: {err}"}
 
 
-def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
+def get_entities_context(hass: HomeAssistant, max_entities: int = 50, compact: bool = False) -> str:
     """Format home entities, rooms/areas, and current states into a clear list for the AI."""
     try:
         area_reg = ar.async_get(hass)
@@ -1831,20 +1831,27 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
     except Exception:
         area_reg = ent_reg = dev_reg = None
 
-    area_map: Dict[str, Dict[str, Any]] = {}
+    area_names: Dict[str, str] = {}
     if area_reg:
         for area in area_reg.async_list_areas():
-            area_map[area.id] = {"name": area.name, "devices": []}
+            area_names[area.id] = area.name
 
     lines = []
-    relevant_domains = {
-        "light", "switch", "climate", "cover", "fan", "lock",
-        "media_player", "vacuum", "scene", "script", "automation", "sensor", "binary_sensor"
-    }
+    # Prioritize actionable entities first
+    actionable_domains = ("light", "climate", "switch", "cover", "fan", "lock", "media_player")
+    secondary_domains = ("sensor", "binary_sensor", "automation")
+
+    all_states = hass.states.async_all()
+    # Sort: actionable domains first
+    sorted_states = sorted(
+        all_states,
+        key=lambda s: (0 if s.domain in actionable_domains else 1, s.entity_id)
+    )
+
     count = 0
-    for state in hass.states.async_all():
+    for state in sorted_states:
         domain = state.domain
-        if domain not in relevant_domains:
+        if domain not in actionable_domains and domain not in secondary_domains:
             continue
         if domain in ("sensor", "binary_sensor"):
             s_id = state.entity_id.lower()
@@ -1855,7 +1862,7 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
             ]):
                 continue
 
-        area_name = "כללי"
+        area_name = ""
         if ent_reg:
             entry = ent_reg.async_get(state.entity_id)
             if entry:
@@ -1864,43 +1871,32 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
                     dev = dev_reg.async_get(entry.device_id)
                     if dev:
                         aid = dev.area_id
-                if aid and aid in area_map:
-                    area_name = area_map[aid]["name"]
-                    if domain in ("light", "switch", "climate", "cover", "fan", "lock", "media_player"):
-                        area_map[aid]["devices"].append(f"{state.name or state.entity_id} (`{state.entity_id}`)")
+                if aid and aid in area_names:
+                    area_name = area_names[aid]
 
-        friendly_name = state.attributes.get("friendly_name", state.entity_id)
+        friendly_name = state.attributes.get("friendly_name") or state.entity_id
         current_state = state.state
 
-        extra = []
-        if "current_temperature" in state.attributes:
-            extra.append(f"temp: {state.attributes['current_temperature']}°C")
-        if "temperature" in state.attributes:
-            extra.append(f"target: {state.attributes['temperature']}°C")
-        if "brightness" in state.attributes and state.attributes["brightness"]:
-            pct = round((state.attributes["brightness"] / 255) * 100)
-            extra.append(f"brightness: {pct}%")
+        if compact:
+            loc = f", {area_name}" if area_name else ""
+            lines.append(f"- {state.entity_id} ({friendly_name}{loc}): {current_state}")
+        else:
+            extra = []
+            if "current_temperature" in state.attributes:
+                extra.append(f"temp: {state.attributes['current_temperature']}°C")
+            if "temperature" in state.attributes:
+                extra.append(f"target: {state.attributes['temperature']}°C")
+            if "brightness" in state.attributes and state.attributes["brightness"]:
+                pct = round((state.attributes["brightness"] / 255) * 100)
+                extra.append(f"brightness: {pct}%")
+            extra_str = f" ({', '.join(extra)})" if extra else ""
+            area_str = f" | חדר: '{area_name}'" if area_name else ""
+            lines.append(f"- {state.entity_id} | '{friendly_name}'{area_str} | state: {current_state}{extra_str}")
 
-        extra_str = f" ({', '.join(extra)})" if extra else ""
-        lines.append(f"- {state.entity_id} | '{friendly_name}' | חדר/אזור: '{area_name}' | state: {current_state}{extra_str}")
         count += 1
         if count >= max_entities:
             break
 
-    room_summary_lines = []
-    if area_map:
-        for aid, data in area_map.items():
-            if data["devices"]:
-                dev_list = ", ".join(data["devices"][:8])
-                room_summary_lines.append(f"• **חדר {data['name']}** (מזהה: `{aid}`): {dev_list}")
-
-    output_parts = []
-    if room_summary_lines:
-        output_parts.append("### 🏠 חלוקת מכשירים לפי חדרים ואזורים בבית (Home Areas & Rooms):\n" + "\n".join(room_summary_lines))
-        output_parts.append("### 📋 רשימת ישויות ומצבים חיים (Entities & Current States):\n" + "\n".join(lines))
-    elif lines:
-        output_parts.append("\n".join(lines))
-    else:
-        output_parts.append("אין ישויות זמינות כרגע.")
-
-    return "\n\n".join(output_parts)
+    if lines:
+        return "### 📋 רשימת ישויות ומצבים חיים (Entities & Current States):\n" + "\n".join(lines)
+    return "אין ישויות זמינות כרגע."

@@ -868,6 +868,19 @@ class AIClient:
                             except Exception:
                                 continue
 
+            # 3. 413 / Token rate limit auto-recovery (compression fallback)
+            if last_status == 413 or ("rate_limit_exceeded" in err_text.lower() and "token" in err_text.lower()):
+                _LOGGER.warning("Request too large (413/tokens) for model '%s'. Attempting automatic compression fallback.", target_model)
+                short_prompt = "אתה סוכן AI ל-Home Assistant. בצע את פקודת המשתמש ישירות ובעברית."
+                last_messages = messages[-2:] if len(messages) >= 2 else messages
+                try:
+                    res = await self._call_openai_compatible(
+                        last_messages, short_prompt, tools, thinking_level=THINKING_OFF, on_chunk=on_chunk, model_name=target_model
+                    )
+                    return res
+                except Exception as comp_err:
+                    _LOGGER.warning("Compression fallback failed: %s", comp_err)
+
             info, hist = last_resp_info if last_resp_info else (None, ())
             raise aiohttp.ClientResponseError(
                 info,
