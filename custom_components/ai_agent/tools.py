@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timedelta
+import difflib
 import io
 import json
 import logging
@@ -280,6 +283,98 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rollback_config_file",
+            "description": "משחזר קובץ קונפיגורציה לגרסתו הקודמת מתוך גיבוי אוטומטי שנוצר לפני עריכה או התקנה. מריץ בדיקת תקינות (check_config) אוטומטית לאחר השחזור כדי לוודא יציבות.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "נתיב הקובץ לשחזור (למשל 'configuration.yaml'). אם מושאר ריק, משחזר את השינוי האחרון ביותר שבוצע.",
+                    },
+                    "backup_id": {
+                        "type": "string",
+                        "description": "מזהה גיבוי ספציפי (מתוך list_backups). אופציונלי.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_backups",
+            "description": "מציג רשימה של גיבויים אוטומטיים שמורים של קובצי קונפיגורציה, כולל תאריך, שעה ושם הקובץ לשחזור (Rollback).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "מספר הגיבויים האחרונים להצגה (ברירת מחדל: 10)",
+                        "default": 10,
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ha_diagnostics",
+            "description": "שולף נתוני אבחון מעמיקים של מערכת Home Assistant: גרסת הליבה (Core Version), סוג ההתקנה (OS, Container, Supervised), אזור זמן, כמות ישויות, אינטגרציות מותקנות ורכיבי custom_components.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_entity_history",
+            "description": "שולף היסטוריית שינויי מצב של ישות מסוימת (חיישן, מתג, אור, מזגן) לאורך זמן מתוך ה-Recorder. מציג מתי המצב השתנה, לאילו ערכים וזמנים מדויקים.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "מזהה הישות (למשל 'switch.water_heater', 'light.living_room', 'binary_sensor.front_door')",
+                    },
+                    "hours": {
+                        "type": "integer",
+                        "description": "כמות שעות אחורה לשליפה (ברירת מחדל: 6, מקסימום: 48)",
+                        "default": 6,
+                    },
+                },
+                "required": ["entity_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_automation_traces",
+            "description": "שולף Trace אבחוני של הרצות אוטומציה אחרונות: מציג בדיוק מתי האוטומציה הופעלה, איזה Trigger הפעיל אותה, אילו תנאים (Conditions) נבדקו והאם הם עברו, ואילו פעולות (Actions) בוצעו או נכשלו.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "automation_id": {
+                        "type": "string",
+                        "description": "מזהה האוטומציה (למשל 'automation.turn_off_lights_night' או ID מתוך automations.yaml או שם האוטומציה)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "כמות הרצות אחרונות לשליפה (ברירת מחדל: 3)",
+                        "default": 3,
+                    },
+                },
+                "required": ["automation_id"],
+            },
+        },
+    },
 ]
 
 
@@ -320,6 +415,16 @@ class ToolEngine:
                 return await self._get_entity_state(args.get("entity_id", ""))
             if name == "propose_service_call":
                 return await self._handle_propose_service_call(args)
+            if name == "rollback_config_file":
+                return await self._handle_rollback_config_file(args)
+            if name == "list_backups":
+                return await self._handle_list_backups(args)
+            if name == "get_ha_diagnostics":
+                return await self._handle_get_ha_diagnostics()
+            if name == "get_entity_history":
+                return await self._handle_get_entity_history(args)
+            if name == "get_automation_traces":
+                return await self._handle_get_automation_traces(args)
             return {"error": f"Unknown tool name: {name}"}
         except Exception as err:
             _LOGGER.exception("Tool execution error in %s: %s", name, err)
@@ -586,7 +691,13 @@ class ToolEngine:
                     await self.hass.services.async_call("homeassistant", action, call_params, blocking=True)
 
                 friendly = state.name if state else eid
-                results.append(f"{friendly} ({eid})")
+                # Verification check: brief yield to let state reflect
+                await asyncio.sleep(0.3)
+                verified_state = self.hass.states.get(eid)
+                if verified_state:
+                    results.append(f"{friendly} ({eid}) [אומת: {verified_state.state}]")
+                else:
+                    results.append(f"{friendly} ({eid})")
             except Exception as err:
                 _LOGGER.warning("Could not execute %s on %s: %s", action, eid, err)
 
@@ -627,19 +738,80 @@ class ToolEngine:
         mode = args.get("mode", "append")
         content = args.get("content", "")
         reason = args.get("reason", "עריכת קונפיגורציה")
+        target_content = args.get("target_content", "")
+
+        # Read existing file content if it exists
+        clean_rel = file_path.lstrip("/\\")
+        full_path = os.path.abspath(os.path.join(self.hass.config.config_dir, clean_rel))
+        existing_text = ""
+        if os.path.exists(full_path):
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    existing_text = f.read()
+            except Exception as err:
+                return {"error": f"לא ניתן לקרוא את הקובץ הקיים: {err}"}
+
+        # Calculate proposed new text
+        if mode == "append":
+            sep = "\n\n" if existing_text and not existing_text.endswith("\n\n") else "\n" if existing_text and not existing_text.endswith("\n") else ""
+            proposed_text = existing_text + sep + content + "\n"
+        elif mode == "overwrite":
+            proposed_text = content
+        elif mode == "replace":
+            if not existing_text:
+                return {"error": f"הקובץ '{file_path}' אינו קיים להחלפה."}
+            if target_content not in existing_text:
+                return {"error": f"הטקסט להחלפה (target_content) לא נמצא בתוך הקובץ '{file_path}'."}
+            proposed_text = existing_text.replace(target_content, content, 1)
+        else:
+            proposed_text = content
+
+        # Syntax Linting / Validation
+        if clean_rel.endswith((".yaml", ".yml")):
+            try:
+                yaml.safe_load(proposed_text)
+            except yaml.YAMLError as y_err:
+                return {
+                    "error": f"❌ שגיאת סינטקס YAML! השינוי המוצע אינו תקין ועלול לשבור את Home Assistant:\n{y_err}\nנא לתקן את הסינטקס לפני האישור."
+                }
+        elif clean_rel.endswith(".json"):
+            try:
+                json.loads(proposed_text)
+            except Exception as j_err:
+                return {
+                    "error": f"❌ שגיאת סינטקס JSON! השינוי המוצע אינו תקין:\n{j_err}\nנא לתקן את הסינטקס לפני האישור."
+                }
+
+        # Compute unified diff
+        diff_lines = list(difflib.unified_diff(
+            existing_text.splitlines(keepends=True),
+            proposed_text.splitlines(keepends=True),
+            fromfile=f"before/{clean_rel}",
+            tofile=f"after/{clean_rel}",
+            lineterm="",
+        ))
+        diff_preview = "".join(diff_lines) if diff_lines else "(ללא הבדל בתוכן)"
+
+        preview = (
+            f"# קובץ: /config/{clean_rel}\n"
+            f"# מצב עריכה: {mode}\n"
+            f"# סיבה: {reason}\n"
+            f"# בטיחות: ייווצר גיבוי אוטומטי ב-/config/.ai_agent_backups/ עם יכולת Rollback מלאה!\n\n"
+            f"=== 🔍 השוואת שינויים (Diff) ===\n"
+            f"{diff_preview}"
+        )
 
         if not self.require_approval:
             res = await self.hass.async_add_executor_job(
                 _safe_edit_file, self.hass.config.config_dir, args
             )
-            return {"status": "ok", "message": f"הקובץ '{file_path}' עודכן בהצלחה במערכת."}
+            return {"status": "ok", "message": f"הקובץ '{clean_rel}' עודכן בהצלחה במערכת (נוצר גיבוי אוטומטי)."}
 
         action_id = f"act_{uuid.uuid4().hex[:8]}"
-        preview = f"# קובץ: /config/{file_path}\n# מצב: {mode}\n# סיבה: {reason}\n\n{content}"
         proposal = {
             "id": action_id,
             "type": "edit_config_file",
-            "title": f"עריכת קובץ: {file_path}",
+            "title": f"עריכת קובץ: {clean_rel}",
             "description": reason,
             "yaml_preview": preview,
             "created_at": time.time(),
@@ -650,11 +822,11 @@ class ToolEngine:
 
         persistent_notification.async_create(
             self.hass,
-            f"**סוכן AI מציע לערוך קובץ:** `{file_path}`\n\n"
+            f"**סוכן AI מציע לערוך קובץ:** `{clean_rel}`\n\n"
             f"סיבה: {reason}\n\n"
-            f"```yaml\n{preview}\n```\n\n"
+            f"```diff\n{diff_preview}\n```\n\n"
             f"פתח את חלון הסוכן כדי לאשר או לדחות את השינוי.",
-            title=f"🤖 ממתין לאישורך: עריכת {file_path}",
+            title=f"🤖 ממתין לאישורך: עריכת {clean_rel}",
             notification_id=f"ai_agent_{action_id}",
         )
 
@@ -663,7 +835,7 @@ class ToolEngine:
             "action_id": action_id,
             "title": proposal["title"],
             "yaml_preview": preview,
-            "instruction": "הצעת העריכה מוכנה וממתינה לאישור המשתמש. שאל את המשתמש האם לאשר את ההטמעה.",
+            "instruction": "הצעת העריכה כוללת Diff מדויק ובדיקת תקינות ועוברת לאישור המשתמש. שאל את המשתמש האם לאשר את ההטמעה.",
         }
 
     async def _handle_install_custom_component(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -950,6 +1122,194 @@ class ToolEngine:
             "instruction": "הפעולה ממתינה לאישור המשתמש. הצג את הסיבה ושאל אם לאשר.",
         }
 
+    async def _handle_rollback_config_file(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Rollback a config file to previous state and check config."""
+        file_path = args.get("file_path")
+        backup_id = args.get("backup_id")
+        try:
+            res = await self.hass.async_add_executor_job(
+                _rollback_file, self.hass.config.config_dir, file_path, backup_id
+            )
+            # Run check_config automatically to ensure health
+            check_msg = "תקינה ללא שגיאות"
+            try:
+                await self.hass.services.async_call("homeassistant", "check_config", {}, blocking=True)
+            except Exception as c_err:
+                check_msg = f"שגיאה בבדיקה: {c_err}"
+            return {
+                "status": "success",
+                "message": f"הקובץ '{res['file_path']}' שוחזר בהצלחה מגיבוי {res['restored_from']}! בדיקת תקינות: {check_msg}.",
+                "details": res,
+            }
+        except Exception as err:
+            return {"status": "error", "message": f"שגיאה בשחזור קובץ מגיבוי: {err}"}
+
+    async def _handle_list_backups(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """List automatic backups."""
+        limit = args.get("limit", 10)
+        backups = await self.hass.async_add_executor_job(
+            _list_backups, self.hass.config.config_dir, limit
+        )
+        return {
+            "status": "ok",
+            "count": len(backups),
+            "backups": backups,
+            "message": f"נמצאו {len(backups)} גיבויים אוטומטיים במערכת." if backups else "לא נמצאו עדיין גיבויים שמורים בתיקייה /config/.ai_agent_backups/.",
+        }
+
+    async def _handle_get_ha_diagnostics(self) -> Dict[str, Any]:
+        """Deep Home Assistant system diagnostics."""
+        from homeassistant.const import __version__ as ha_version
+
+        custom_components = []
+        cc_dir = self.hass.config.path("custom_components")
+        if os.path.isdir(cc_dir):
+            try:
+                custom_components = [
+                    d for d in os.listdir(cc_dir)
+                    if os.path.isdir(os.path.join(cc_dir, d)) and not d.startswith(".")
+                ]
+            except Exception:
+                pass
+
+        all_states = self.hass.states.async_all()
+        domain_counts: Dict[str, int] = {}
+        for s in all_states:
+            dom = s.domain
+            domain_counts[dom] = domain_counts.get(dom, 0) + 1
+
+        top_domains = dict(sorted(domain_counts.items(), key=lambda item: item[1], reverse=True)[:10])
+
+        return {
+            "ha_version": ha_version,
+            "installation_type": "Home Assistant OS / Supervised" if self.hass.config.components and "hassio" in self.hass.config.components else "Container / Core",
+            "timezone": str(self.hass.config.time_zone),
+            "config_dir": self.hass.config.config_dir,
+            "total_entities": len(all_states),
+            "top_domains_breakdown": top_domains,
+            "custom_components_installed": custom_components,
+            "recorder_active": "recorder" in self.hass.config.components,
+            "automations_count": domain_counts.get("automation", 0),
+            "scripts_count": domain_counts.get("script", 0),
+            "system_state": "RUNNING" if self.hass.is_running else "STARTING",
+        }
+
+    async def _handle_get_entity_history(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch historical state changes from Recorder."""
+        entity_id = args.get("entity_id", "")
+        hours = min(max(int(args.get("hours", 6)), 1), 48)
+
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return {"error": f"ישות '{entity_id}' אינה קיימת במערכת."}
+
+        history_events = []
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.history import get_significant_states
+            from homeassistant.util import dt as dt_util
+
+            end_time = dt_util.utcnow()
+            start_time = end_time - timedelta(hours=hours)
+
+            states_dict = await get_instance(self.hass).async_add_executor_job(
+                get_significant_states,
+                self.hass,
+                start_time,
+                end_time,
+                [entity_id],
+            )
+
+            ent_states = states_dict.get(entity_id, [])
+            for s in ent_states[-20:]:
+                history_events.append({
+                    "state": s.state,
+                    "timestamp": s.last_changed.strftime("%Y-%m-%d %H:%M:%S") if hasattr(s, "last_changed") and s.last_changed else "unknown",
+                    "attributes": {
+                        k: v for k, v in s.attributes.items()
+                        if k in ("temperature", "current_temperature", "brightness", "unit_of_measurement", "friendly_name")
+                    },
+                })
+        except Exception as ex:
+            _LOGGER.debug("Could not query recorder history: %s", ex)
+
+        if not history_events:
+            history_events.append({
+                "state": state.state,
+                "timestamp": state.last_changed.strftime("%Y-%m-%d %H:%M:%S") if hasattr(state, "last_changed") and state.last_changed else "unknown",
+                "note": "מצב אחרון ידוע (היסטוריה מלאה מה-recorder אינה זמינה כעת)",
+            })
+
+        return {
+            "entity_id": entity_id,
+            "friendly_name": state.name,
+            "current_state": state.state,
+            "period_hours": hours,
+            "changes_count": len(history_events),
+            "history": history_events,
+        }
+
+    async def _handle_get_automation_traces(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch execution traces and config of an automation."""
+        target = args.get("automation_id", "")
+        limit = min(max(int(args.get("limit", 3)), 1), 10)
+
+        automation_entity_id = target
+        if not target.startswith("automation."):
+            for s in self.hass.states.async_all("automation"):
+                if target.lower() in s.entity_id.lower() or target.lower() in (s.name or "").lower():
+                    automation_entity_id = s.entity_id
+                    break
+
+        traces_found = []
+        try:
+            item_id = automation_entity_id.replace("automation.", "")
+            trace_data = self.hass.data.get("trace", {})
+            stored_traces = trace_data.get("automation", {}) if isinstance(trace_data, dict) else {}
+
+            if item_id in stored_traces:
+                t_list = stored_traces[item_id]
+                for t in list(t_list)[-limit:]:
+                    traces_found.append({
+                        "run_id": getattr(t, "run_id", "unknown"),
+                        "timestamp": getattr(t, "timestamp", {}).get("start", ""),
+                        "state": getattr(t, "state", "unknown"),
+                        "trigger": getattr(t, "trigger", "unknown"),
+                        "error": str(getattr(t, "script_execution", "") or ""),
+                    })
+        except Exception as ex:
+            _LOGGER.debug("Could not read in-memory trace: %s", ex)
+
+        yaml_def = None
+        auto_file = self.hass.config.path("automations.yaml")
+        if os.path.exists(auto_file):
+            try:
+                with open(auto_file, "r", encoding="utf-8") as f:
+                    content = yaml.safe_load(f)
+                    if isinstance(content, list):
+                        for a in content:
+                            if isinstance(a, dict):
+                                if (
+                                    a.get("id") == target
+                                    or a.get("alias", "").lower() == target.lower()
+                                    or a.get("id") == automation_entity_id.replace("automation.", "")
+                                ):
+                                    yaml_def = a
+                                    break
+            except Exception:
+                pass
+
+        state = self.hass.states.get(automation_entity_id)
+        return {
+            "automation_id": automation_entity_id,
+            "friendly_name": state.name if state else target,
+            "current_state": state.state if state else "unknown",
+            "last_triggered": state.attributes.get("last_triggered") if state else None,
+            "traces": traces_found,
+            "automation_config": yaml_def,
+            "status": "ok" if (state or yaml_def or traces_found) else "not_found",
+        }
+
 
 # --- Safe File & Network Operations (Run inside Executor) ---
 
@@ -1029,11 +1389,185 @@ def _safe_list_files(config_dir: str, sub_dir: str = "") -> Dict[str, Any]:
         return {"error": f"שגיאה בסריקת התיקייה: {err}"}
 
 
+BACKUPS_DIR_NAME = ".ai_agent_backups"
+BACKUP_INDEX_FILE = "backups_index.json"
+
+
+def _get_backups_dir(config_dir: str) -> str:
+    path = os.path.join(config_dir, BACKUPS_DIR_NAME)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _create_file_backup(config_dir: str, file_rel: str) -> Optional[Dict[str, Any]]:
+    """Create timestamped backup of a file before modification."""
+    full_path = os.path.abspath(os.path.join(config_dir, file_rel))
+    if not os.path.exists(full_path):
+        return None
+
+    backups_dir = _get_backups_dir(config_dir)
+    clean_name = file_rel.replace("/", "_").replace("\\", "_")
+    ts = int(time.time())
+    backup_filename = f"{clean_name}.{ts}.bak"
+    backup_path = os.path.join(backups_dir, backup_filename)
+
+    shutil.copy2(full_path, backup_path)
+
+    index_path = os.path.join(backups_dir, BACKUP_INDEX_FILE)
+    records = []
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except Exception:
+            records = []
+
+    rec = {
+        "id": f"bak_{ts}_{uuid.uuid4().hex[:4]}",
+        "file_path": file_rel,
+        "backup_filename": backup_filename,
+        "timestamp": ts,
+        "iso": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
+        "size_bytes": os.path.getsize(backup_path),
+    }
+    records.insert(0, rec)
+    records = records[:50]
+
+    try:
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception as err:
+        _LOGGER.warning("Could not save backup index: %s", err)
+
+    return rec
+
+
+def _create_component_backup(config_dir: str, comp_name: str) -> Optional[Dict[str, Any]]:
+    """Create backup of an entire custom component folder before update."""
+    target_comp_dir = os.path.join(config_dir, "custom_components", comp_name)
+    if not os.path.exists(target_comp_dir):
+        return None
+
+    backups_dir = _get_backups_dir(config_dir)
+    ts = int(time.time())
+    zip_filename = f"comp_{comp_name}.{ts}.zip"
+    zip_path = os.path.join(backups_dir, zip_filename)
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(target_comp_dir):
+            for file in files:
+                abs_f = os.path.join(root, file)
+                rel_f = os.path.relpath(abs_f, target_comp_dir)
+                zf.write(abs_f, rel_f)
+
+    index_path = os.path.join(backups_dir, BACKUP_INDEX_FILE)
+    records = []
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except Exception:
+            records = []
+
+    rec = {
+        "id": f"bak_comp_{ts}_{uuid.uuid4().hex[:4]}",
+        "file_path": f"custom_components/{comp_name}",
+        "backup_filename": zip_filename,
+        "timestamp": ts,
+        "iso": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
+        "size_bytes": os.path.getsize(zip_path),
+    }
+    records.insert(0, rec)
+    records = records[:50]
+
+    try:
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    return rec
+
+
+def _rollback_file(config_dir: str, file_path: Optional[str] = None, backup_id: Optional[str] = None) -> Dict[str, Any]:
+    """Rollback a file from backup."""
+    backups_dir = _get_backups_dir(config_dir)
+    index_path = os.path.join(backups_dir, BACKUP_INDEX_FILE)
+    if not os.path.exists(index_path):
+        raise FileNotFoundError("לא נמצאו גיבויים קודמים לשחזור במערכת.")
+
+    with open(index_path, "r", encoding="utf-8") as f:
+        records = json.load(f)
+
+    if not records:
+        raise FileNotFoundError("רשימת הגיבויים ריקה.")
+
+    target_rec = None
+    if backup_id:
+        for r in records:
+            if r.get("id") == backup_id:
+                target_rec = r
+                break
+        if not target_rec:
+            raise ValueError(f"מזהה גיבוי '{backup_id}' לא נמצא.")
+    elif file_path:
+        clean_target = file_path.lstrip("/\\")
+        for r in records:
+            if r.get("file_path") == clean_target:
+                target_rec = r
+                break
+        if not target_rec:
+            raise ValueError(f"לא נמצא גיבוי עבור הקובץ '{file_path}'.")
+    else:
+        target_rec = records[0]
+
+    backup_file = os.path.join(backups_dir, target_rec["backup_filename"])
+    if not os.path.exists(backup_file):
+        raise FileNotFoundError(f"קובץ הגיבוי {target_rec['backup_filename']} אינו קיים פיזית בדיסק.")
+
+    dest_path = os.path.abspath(os.path.join(config_dir, target_rec["file_path"]))
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    # Save a safety backup before rolling back
+    if os.path.exists(dest_path):
+        _create_file_backup(config_dir, target_rec["file_path"])
+
+    if target_rec["backup_filename"].endswith(".zip"):
+        with zipfile.ZipFile(backup_file, "r") as zf:
+            zf.extractall(dest_path)
+    else:
+        shutil.copy2(backup_file, dest_path)
+
+    return {
+        "status": "rolled_back",
+        "file_path": target_rec["file_path"],
+        "backup_id": target_rec["id"],
+        "restored_from": target_rec["iso"],
+    }
+
+
+def _list_backups(config_dir: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """List stored backups."""
+    backups_dir = _get_backups_dir(config_dir)
+    index_path = os.path.join(backups_dir, BACKUP_INDEX_FILE)
+    if not os.path.exists(index_path):
+        return []
+    try:
+        with open(index_path, "r", encoding="utf-8") as f:
+            records = json.load(f)
+            return records[:limit]
+    except Exception:
+        return []
+
+
 def _safe_edit_file(config_dir: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     file_rel = payload["file_path"].lstrip("/\\")
     full_path = os.path.abspath(os.path.join(config_dir, file_rel))
     if os.path.commonpath([full_path, config_dir]) != config_dir:
         raise ValueError("נתיב הקובץ חייב להיות בתוך תיקיית /config")
+
+    # Automatically create backup before writing any changes
+    _create_file_backup(config_dir, file_rel)
 
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     mode = payload.get("mode", "append")
@@ -1066,6 +1600,8 @@ def _safe_edit_file(config_dir: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _safe_install_component(config_dir: str, github_repo: str, component_name: str) -> Dict[str, Any]:
+    # Backup existing component directory before overwriting if present
+    _create_component_backup(config_dir, component_name)
     repo_clean = github_repo.strip().replace("https://github.com/", "").strip("/")
     urls_to_try = [
         f"https://github.com/{repo_clean}/archive/refs/heads/main.zip",

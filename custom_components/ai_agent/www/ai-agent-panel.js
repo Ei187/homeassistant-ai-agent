@@ -2309,5 +2309,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.7.0 (Multi-Provider Key Memory & Resilient Inference)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.7.1 (Evidence-Based Architecture: Rollback, Traces & History)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
