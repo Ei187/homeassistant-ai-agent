@@ -463,9 +463,26 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             suggestions.append("\nמעוניין שניישם אחד מהשיפורים? פשוט אמור לי (למשל: `צור אוטומציה לכיבוי אורות בלילה`) ואכין כרטיס להטמעה מיידית!")
             reply = "\n\n".join(suggestions)
 
+        # 12. User Confusion or Bot Complaints ("איזה בקשה הבנת", "בוט בלי מוח", "?")
+        elif any(w in user_text for w in ["איזה בקשה", "מה הבנת", "לא הבנת", "לא ביקשתי", "בוט בלי מוח", "מטומטם", "טיפש", "למה אתה בוט"]) or user_raw.strip() in ("?", "??", "???"):
+            p_title, p_desc = {
+                "openai": ("OpenAI (ChatGPT)", "באתר chatgpt.com השיחה חינם בדפדפן, אך עבור Home Assistant (תוכנה חיצונית) OpenAI דורשת מפתח API מ-platform.openai.com. (למסלול חינמי מלא ללא עלות ב-Home Assistant, בחר ב-Google Gemini למעלה!)."),
+                "gemini": ("Google Gemini", "מודל Gemini 2.5 Flash חינמי לחלוטין (ללא אשראי) ב-Google AI Studio. הזן מפתח חינמי בכפתור ה-`+` כדי להפעיל שיחה חופשית מלאה."),
+                "anthropic": ("Anthropic Claude", "לחיבור מודל Claude נדרש מפתח API בכפתור ה-`+`."),
+                "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
+                "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים ב-OpenRouter נדרש מפתח בכפתור ה-`+`."),
+            }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
+
+            reply = (
+                "אתה צודק לחלוטין. כרגע לא הוגדר מפתח API, ולכן המערכת אינה מחוברת למוח ה-AI של שרתי הענן אלא רצה במצב פקודות מקומי בלבד.\n\n"
+                "במצב זה אני יודע לבצע אך ורק פקודות ישירות על הבית (כמו `כבה את האור בסלון`, `מה דולק עכשיו`, `סרוק שגיאות`).\n\n"
+                f"🧠 **כדי לחבר את המוח המלא ולשוחח חופשי באינטליגנציה מקסימלית:**\n"
+                f"{p_desc}"
+            )
+
         else:
             p_title, p_desc = {
-                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם, אך קישור API דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** (עם מפתח חינמי מ-Google AI Studio) או להזין מפתח OpenAI בכפתור ה-`+`."),
+                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם בדפדפן, אך קישור Home Assistant דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** (עם מפתח חינמי מ-Google AI Studio) או להזין מפתח OpenAI בכפתור ה-`+`."),
                 "gemini": ("Google Gemini", "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות! להפעלתו, הזן מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+`."),
                 "anthropic": ("Anthropic Claude", "לחיבור מודל Claude, הזן מפתח API בכפתור ה-`+`."),
                 "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek, הזן מפתח API בכפתור ה-`+`."),
@@ -473,8 +490,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
 
             reply = (
-                f"הבנתי את בקשתך: '{user_raw}'.\n\n"
-                f"אני מחובר ישירות ל-Home Assistant ומסוגל לבצע שליטה במכשירים, בניית אוטומציות, סריקת לוגים, חיפוש והתקנת אינטגרציות מ-GitHub.\n\n"
+                "אני מחובר כרגע בחיבור מקומי ל-Home Assistant ומסוגל לבצע פקודות ישירות על הבית (שליטה במכשירים, כיבוי/הדלקה, סריקת לוגים ועריכת קבצים).\n\n"
                 f"🧠 **לשיחה חופשית ואינטליגנציה מלאה של {p_title}:**\n"
                 f"{p_desc}"
             )
