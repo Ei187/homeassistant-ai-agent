@@ -1717,6 +1717,49 @@ class AIAgentPanel extends HTMLElement {
           border-color: #0a84ff;
         }
 
+        .help-question-btn {
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          color: #64d2ff;
+          border-radius: 50%;
+          width: 20px;
+          height: 20px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          margin-right: 6px;
+          transition: all 0.2s ease;
+          vertical-align: middle;
+          line-height: 1;
+        }
+        .help-question-btn:hover {
+          background: rgba(100, 210, 255, 0.25);
+          border-color: #64d2ff;
+          transform: scale(1.15);
+        }
+        .info-help-box {
+          background: rgba(20, 20, 24, 0.96);
+          border: 1px solid rgba(100, 210, 255, 0.35);
+          border-radius: 14px;
+          padding: 14px 16px;
+          margin-top: 10px;
+          font-size: 12px;
+          line-height: 1.6;
+          color: #e5e5ea;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+        .info-help-box a {
+          color: #64d2ff;
+          text-decoration: underline;
+          font-weight: 600;
+        }
+        .info-help-box a:hover {
+          color: #ffffff;
+        }
+
         /* Toast */
         .pro-toast {
           position: fixed;
@@ -1906,7 +1949,6 @@ class AIAgentPanel extends HTMLElement {
                   <div class="card-icon">⚡</div>
                   <div>
                     <div class="card-title">4. רמת חשיבה ומהירות (Performance & Reasoning)</div>
-                    <div class="card-subtitle">Off = ⚡ מהירות שיא מיידית (אוברקלוק)! | Max = חשיבה כבדה</div>
                   </div>
                 </div>
                 <div class="thinking-pills">
@@ -1927,11 +1969,16 @@ class AIAgentPanel extends HTMLElement {
 
               <!-- מלבן 5: API Key -->
               <div class="pro-card">
-                <div class="card-header">
-                  <div class="card-icon">🔑</div>
-                  <div>
-                    <div class="card-title">5. מפתח API (API Key)</div>
-                    <div class="card-subtitle">נדרש לחיבור ענן (ללא מפתח: פקודות בית מקומיות בלבד)</div>
+                <div class="card-header" style="justify-content: space-between;">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <div class="card-icon">🔑</div>
+                    <div>
+                      <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
+                        <span>5. מפתח API (API Key)</span>
+                        <button type="button" id="api-key-help-btn" class="help-question-btn" title="הסבר והנפקת מפתחות API בחינם">?</button>
+                      </div>
+                      <div class="card-subtitle">נדרש לחיבור ענן (ללא מפתח: פקודות בית מקומיות בלבד)</div>
+                    </div>
                   </div>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
@@ -1955,8 +2002,33 @@ class AIAgentPanel extends HTMLElement {
                     👁️
                   </button>
                 </div>
-                <div id="provider-key-hint" style="font-size: 11.5px; color: #a1a1a6; margin-top: 8px; line-height: 1.5;">
-                  ${this.getProviderKeyHint(s.provider)}
+                <div id="api-key-help-box" class="info-help-box" style="display: none;">
+                  <div style="font-weight: 700; margin-bottom: 8px; color: #64d2ff; font-size: 13px;">🎁 מפתחות API חינמיים ללא עלות וללא צורך במילוי טוקנים:</div>
+                  
+                  <div style="margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
+                    <b>1. Google Gemini (הכי מומלץ – מודל חכם ועדכני):</b><br/>
+                    לחיבור המודל החינמי העדכני של גוגל (כמו באתר Gemini):<br/>
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">🎁 לחץ כאן להפקת מפתח Google Gemini בחינם (ללא אשראי)</a><br/>
+                    <span style="color: #a1a1a6; font-size: 11px;">גוגל מעניקה מכסה חינמית מלאה וקבועה של 15 פניות בדקה ומיליון טוקנים – מעל ומעבר לכל צרכי הבית ללא שום עלות.</span>
+                  </div>
+
+                  <div style="margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
+                    <b>2. OpenRouter (גישה למודלים חינמיים שונים):</b><br/>
+                    לחיבור מודלים חינמיים של Llama, DeepSeek ו-Gemini ללא מילוי טוקנים:<br/>
+                    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">🌐 לחץ כאן להפקת מפתח OpenRouter בחינם</a><br/>
+                    <span style="color: #a1a1a6; font-size: 11px;">מאפשר שימוש בכל המודלים המסומנים עם סיומת :free ללא חיוב.</span>
+                  </div>
+
+                  <div style="margin-bottom: 6px;">
+                    <b>3. GroqCloud (מעבדי LPU במהירות שיא):</b><br/>
+                    לחיבור מודלי Llama 3.3 70B בחינם וללא כרטיס אשראי:<br/>
+                    <a href="https://console.groq.com/keys" target="_blank" rel="noopener">⚡ לחץ כאן להפקת מפתח Groq בחינם</a><br/>
+                    <span style="color: #a1a1a6; font-size: 11px;">ניתן להשתמש בו בבחירת ספק 'שרת מקומי / Custom' או דרך OpenRouter.</span>
+                  </div>
+
+                  <div style="margin-top: 8px; font-size: 11px; color: #86868b; border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 6px;">
+                    ℹ️ <b>OpenAI (ChatGPT) / Claude:</b> ספקים אלו דורשים מפתח מחשבון מפתחים בתשלום עם יתרת טוקנים (באתר שלהם השיחה חינם, אך ה-API דורש תקציב).
+                  </div>
                 </div>
               </div>
             </div>
@@ -2051,11 +2123,20 @@ class AIAgentPanel extends HTMLElement {
           autoBadgeBtn.style.borderColor = '#0a84ff';
           autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
         }
-        const keyHintEl = root.querySelector('#provider-key-hint');
-        if (keyHintEl) {
-          keyHintEl.innerHTML = this.getProviderKeyHint(prov);
-        }
         this.updateHeaderStatusPill();
+      };
+    }
+
+    // Help Question Button for Free API Keys
+    const helpBtn = root.querySelector('#api-key-help-btn');
+    const helpBox = root.querySelector('#api-key-help-box');
+    if (helpBtn && helpBox) {
+      helpBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isOpen = helpBox.style.display !== 'none';
+        helpBox.style.display = isOpen ? 'none' : 'block';
+        helpBtn.style.background = isOpen ? 'rgba(255, 255, 255, 0.1)' : 'rgba(100, 210, 255, 0.35)';
       };
     }
 
@@ -2150,5 +2231,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.7 (Refined Natural Conversational Intelligence)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.6.8 (Free API Keys Info Modal & Clean UI)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
