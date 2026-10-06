@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.6.9"
+VERSION = "1.7.0"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -381,6 +381,7 @@ AGENT_SYSTEM_PROMPTS = {
 CONF_PROVIDER = "provider"
 CONF_MODEL = "model"
 CONF_API_KEY = "api_key"
+CONF_API_KEYS = "api_keys"
 CONF_BASE_URL = "base_url"
 CONF_THINKING_LEVEL = "thinking_level"
 CONF_AGENT_ROLE = "agent_role"
@@ -392,6 +393,7 @@ DEFAULT_SETTINGS = {
     CONF_PROVIDER: PROVIDER_OPENAI,
     CONF_MODEL: MODEL_AUTO,
     CONF_API_KEY: "",
+    CONF_API_KEYS: {},
     CONF_BASE_URL: DEFAULT_BASE_URLS[PROVIDER_OPENAI],
     CONF_THINKING_LEVEL: THINKING_HIGH,
     CONF_AGENT_ROLE: AGENT_OMNI,

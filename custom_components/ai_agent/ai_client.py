@@ -193,7 +193,7 @@ class AIClient:
 
         # 3. OpenAI
         if self.provider == PROVIDER_OPENAI:
-            return "chatgpt-4o-latest"
+            return "gpt-4o-mini"
 
         # 4. Anthropic Claude
         if self.provider == PROVIDER_ANTHROPIC:
@@ -600,6 +600,9 @@ class AIClient:
             _LOGGER.info("Responses API: retrying model '%s' with reasoning effort=%s", target_model, next_eff)
 
         if data is None:
+            if status == 404 and target_model != "gpt-4o-mini":
+                _LOGGER.warning("Model '%s' returned 404 on OpenAI Responses API. Falling back to 'gpt-4o-mini'.", target_model)
+                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name="gpt-4o-mini")
             raise aiohttp.ClientResponseError(
                 req_info,
                 history,
@@ -768,6 +771,9 @@ class AIClient:
                 payload["reasoning_effort"] = next_effort
 
         if data is None:
+            if last_status == 404 and target_model != "gpt-4o-mini" and self.provider == PROVIDER_OPENAI:
+                _LOGGER.warning("Model '%s' returned 404 on OpenAI. Falling back to 'gpt-4o-mini'.", target_model)
+                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name="gpt-4o-mini")
             info, hist = last_resp_info if last_resp_info else (None, ())
             raise aiohttp.ClientResponseError(
                 info,

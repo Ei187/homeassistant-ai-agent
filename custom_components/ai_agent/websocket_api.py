@@ -18,6 +18,7 @@ from .const import (
     AGENT_SYSTEM_PROMPTS,
     CONF_AGENT_ROLE,
     CONF_API_KEY,
+    CONF_API_KEYS,
     CONF_BASE_URL,
     CONF_MOBILE_NOTIFY_SERVICE,
     CONF_MODEL,
@@ -63,10 +64,30 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
             settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
         domain_data["settings"] = settings
 
+    # Ensure CONF_API_KEYS exists and is synced
+    if CONF_API_KEYS not in settings or not isinstance(settings.get(CONF_API_KEYS), dict):
+        settings[CONF_API_KEYS] = {}
+        if settings.get(CONF_API_KEY) and settings.get(CONF_PROVIDER):
+            settings[CONF_API_KEYS][settings[CONF_PROVIDER]] = settings[CONF_API_KEY]
+
     safe_settings = dict(settings)
+    active_prov = safe_settings.get(CONF_PROVIDER)
+    stored_keys = safe_settings.get(CONF_API_KEYS)
+    if isinstance(stored_keys, dict) and active_prov in stored_keys and stored_keys[active_prov]:
+        safe_settings[CONF_API_KEY] = stored_keys[active_prov]
+
     key = safe_settings.get(CONF_API_KEY, "")
     if key and (key.startswith("••••") or key.startswith("****")):
         safe_settings[CONF_API_KEY] = ""
+
+    # Sanitize api_keys dict for safety
+    if isinstance(safe_settings.get(CONF_API_KEYS), dict):
+        clean_keys = {}
+        for p, k in safe_settings[CONF_API_KEYS].items():
+            if k and not (str(k).startswith("••••") or str(k).startswith("****")):
+                clean_keys[p] = k
+        safe_settings[CONF_API_KEYS] = clean_keys
+
     client = domain_data.get("client")
     if client and hasattr(client, "resolve_active_model"):
         try:
@@ -83,6 +104,7 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
     vol.Optional(CONF_MODEL): str,
     vol.Optional(CONF_THINKING_LEVEL): str,
     vol.Optional(CONF_API_KEY): vol.Any(str, None),
+    vol.Optional(CONF_API_KEYS): dict,
     vol.Optional(CONF_BASE_URL): str,
     vol.Optional(CONF_REQUIRE_APPROVAL): bool,
     vol.Optional(CONF_NOTIFY_MOBILE): bool,
@@ -109,15 +131,36 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         if key in msg and msg[key] is not None:
             current[key] = msg[key]
 
+    current_keys = current.get(CONF_API_KEYS)
+    if not isinstance(current_keys, dict):
+        current_keys = {}
+        current[CONF_API_KEYS] = current_keys
+
+    # Merge full api_keys dict from frontend if provided
+    if CONF_API_KEYS in msg and isinstance(msg[CONF_API_KEYS], dict):
+        for prov, p_key in msg[CONF_API_KEYS].items():
+            if p_key is not None:
+                p_str = str(p_key).strip()
+                if not (p_str.startswith("••••") or p_str.startswith("****")):
+                    current_keys[prov] = p_str
+
     if CONF_API_KEY in msg:
         raw_key = msg[CONF_API_KEY]
         if raw_key is not None:
             raw_str = str(raw_key).strip()
             # Only update if user entered a real key or explicitly emptied it; ignore legacy masked dots
-            if raw_str.startswith("••••") or raw_str.startswith("****"):
-                pass
-            else:
+            if not (raw_str.startswith("••••") or raw_str.startswith("****")):
                 current[CONF_API_KEY] = raw_str
+                active_prov = current.get(CONF_PROVIDER)
+                if active_prov:
+                    current_keys[active_prov] = raw_str
+
+    # Sync active provider's key
+    active_prov = current.get(CONF_PROVIDER)
+    if active_prov and active_prov in current_keys:
+        current[CONF_API_KEY] = current_keys[active_prov]
+    elif active_prov and not current.get(CONF_API_KEY):
+        current[CONF_API_KEY] = current_keys.get(active_prov, "")
 
     # Auto-adjust base_url to provider's default if needed
     provider = current.get(CONF_PROVIDER)
@@ -139,6 +182,13 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
     key = safe_settings.get(CONF_API_KEY, "")
     if key and (key.startswith("••••") or key.startswith("****")):
         safe_settings[CONF_API_KEY] = ""
+    if isinstance(safe_settings.get(CONF_API_KEYS), dict):
+        clean_keys = {}
+        for p, k in safe_settings[CONF_API_KEYS].items():
+            if k and not (str(k).startswith("••••") or str(k).startswith("****")):
+                clean_keys[p] = k
+        safe_settings[CONF_API_KEYS] = clean_keys
+
     client = domain_data.get("client")
     if client and hasattr(client, "resolve_active_model"):
         try:

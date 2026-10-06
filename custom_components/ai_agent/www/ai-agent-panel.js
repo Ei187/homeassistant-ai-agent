@@ -62,6 +62,7 @@ class AIAgentPanel extends HTMLElement {
       thinking_level: 'high',
       require_approval: true,
       api_key: '',
+      api_keys: {},
       base_url: 'https://api.openai.com/v1',
     };
     try {
@@ -140,6 +141,15 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS({ type: 'ai_agent/get_settings' });
       if (res) {
         this.settings = { ...this.settings, ...res };
+        if (!this.settings.api_keys) this.settings.api_keys = {};
+        if (res.api_keys && typeof res.api_keys === 'object') {
+          this.settings.api_keys = { ...this.settings.api_keys, ...res.api_keys };
+        }
+        if (this.settings.provider && this.settings.api_keys[this.settings.provider]) {
+          this.settings.api_key = this.settings.api_keys[this.settings.provider];
+        } else if (this.settings.api_key && this.settings.provider) {
+          this.settings.api_keys[this.settings.provider] = this.settings.api_key;
+        }
         if (res.resolved_model && res.resolved_model !== 'free-engine') {
           this.setResolvedModel(this.settings.provider, res.resolved_model);
         }
@@ -164,6 +174,13 @@ class AIAgentPanel extends HTMLElement {
     if (roleSel && this.settings.agent_role) roleSel.value = this.settings.agent_role;
     if (provSel && this.settings.provider) provSel.value = this.settings.provider;
     if (modelInp && this.settings.model) modelInp.value = this.settings.model;
+
+    if (this.settings.api_keys && this.settings.provider) {
+      const pKey = this.settings.api_keys[this.settings.provider];
+      if (pKey !== undefined) {
+        this.settings.api_key = pKey;
+      }
+    }
     if (keyInp) keyInp.value = this.settings.api_key || '';
 
     const autoBadgeBtn = root.querySelector('#auto-model-badge-btn');
@@ -216,8 +233,11 @@ class AIAgentPanel extends HTMLElement {
     if (p === 'gemini') {
       return `🎁 <b>Google Gemini:</b> מודל Gemini 2.5 Flash חינמי לחלוטין (ללא אשראי) ב-Google AI Studio: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">לחץ כאן להפקת מפתח חינם</a>`;
     }
+    if (p === 'groq') {
+      return `⚡ <b>GroqCloud:</b> חינם ב-100% ללא כרטיס אשראי (Llama 3.3 70B במהירות שיא): <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">לחץ כאן להפקת מפתח Groq חינם</a>`;
+    }
     if (p === 'openai') {
-      return `ℹ️ <b>OpenAI:</b> דורש מפתח מ-<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">platform.openai.com</a>. (באתר chatgpt.com השיחה חינם, אך ה-API דורש מפתח. למסלול חינמי ב-Home Assistant ללא עלות, בחר ב-<b>Google Gemini</b> למעלה!).`;
+      return `ℹ️ <b>OpenAI:</b> דורש מפתח מ-<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">platform.openai.com</a>. (באתר chatgpt.com השיחה חינם, אך ה-API דורש מפתח. למסלול חינמי ב-Home Assistant ללא עלות, בחר ב-<b>Google Gemini</b> או <b>GroqCloud</b> למעלה!).`;
     }
     if (p === 'anthropic') {
       return `ℹ️ <b>Anthropic Claude:</b> דורש מפתח מ-<a href="https://console.anthropic.com/" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">console.anthropic.com</a>.`;
@@ -273,6 +293,10 @@ class AIAgentPanel extends HTMLElement {
 
   async saveSettings() {
     if (!this._hass) return;
+    if (!this.settings.api_keys) this.settings.api_keys = {};
+    if (this.settings.provider) {
+      this.settings.api_keys[this.settings.provider] = this.settings.api_key || '';
+    }
     const payload = {
       type: 'ai_agent/save_settings',
       agent_role: this.settings.agent_role,
@@ -280,6 +304,7 @@ class AIAgentPanel extends HTMLElement {
       model: this.settings.model,
       thinking_level: this.settings.thinking_level,
       api_key: this.settings.api_key || '',
+      api_keys: this.settings.api_keys || {},
       base_url: this.settings.base_url || '',
       require_approval: this.settings.require_approval !== false,
     };
@@ -287,6 +312,12 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS(payload);
       if (res && res.settings) {
         this.settings = { ...this.settings, ...res.settings };
+        if (res.settings.api_keys && typeof res.settings.api_keys === 'object') {
+          this.settings.api_keys = { ...this.settings.api_keys, ...res.settings.api_keys };
+        }
+        if (this.settings.provider && this.settings.api_keys[this.settings.provider]) {
+          this.settings.api_key = this.settings.api_keys[this.settings.provider];
+        }
         if (res.settings.resolved_model && res.settings.resolved_model !== 'free-engine') {
           this.setResolvedModel(this.settings.provider, res.settings.resolved_model);
         }
@@ -2111,23 +2142,56 @@ class AIAgentPanel extends HTMLElement {
       modelInp.addEventListener('input', updateBadgeVisual);
     }
 
-    // Provider onchange helper: suggest auto-latest when provider changes
+    // Provider onchange helper: switch provider and remember API key per provider
     const provSel = root.querySelector('#provider-select');
+    const keyInp = root.querySelector('#api-key-input');
     if (provSel) {
       provSel.onchange = () => {
-        const prov = provSel.value;
+        const oldProv = this.settings.provider;
+        const newProv = provSel.value;
+
+        if (!this.settings.api_keys) this.settings.api_keys = {};
+
+        // 1. Remember whatever key was typed for the old provider
+        if (keyInp && oldProv) {
+          this.settings.api_keys[oldProv] = keyInp.value.trim();
+        }
+
+        // 2. Switch active provider
+        this.settings.provider = newProv;
+
+        // 3. Load saved key for the newly selected provider (or empty if none entered yet)
+        const loadedKey = this.settings.api_keys[newProv] || '';
+        this.settings.api_key = loadedKey;
+        if (keyInp) {
+          keyInp.value = loadedKey;
+        }
+
+        // 4. Default model to auto-latest for the new provider
         if (modelInp) {
           modelInp.value = 'auto-latest';
         }
-        this.settings.provider = prov;
         this.settings.model = 'auto-latest';
         if (autoBadgeBtn) {
           autoBadgeBtn.style.background = 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))';
           autoBadgeBtn.style.borderColor = '#0a84ff';
           autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
         }
+
         this.updateHeaderStatusPill();
       };
+    }
+
+    // Live update active provider's key when user types
+    if (keyInp) {
+      keyInp.addEventListener('input', () => {
+        const val = keyInp.value.trim();
+        this.settings.api_key = val;
+        if (!this.settings.api_keys) this.settings.api_keys = {};
+        if (this.settings.provider) {
+          this.settings.api_keys[this.settings.provider] = val;
+        }
+      });
     }
 
     // Help Question Button for Free API Keys
@@ -2145,7 +2209,6 @@ class AIAgentPanel extends HTMLElement {
 
     // Toggle API Key visibility
     const toggleKeyBtn = root.querySelector('#toggle-key-visibility-btn');
-    const keyInp = root.querySelector('#api-key-input');
     if (toggleKeyBtn && keyInp) {
       toggleKeyBtn.onclick = (e) => {
         e.preventDefault();
@@ -2169,14 +2232,22 @@ class AIAgentPanel extends HTMLElement {
         if (e) { e.preventDefault(); e.stopPropagation(); }
         const roleSel = root.querySelector('#agent-role-select');
         const pSel = root.querySelector('#provider-select');
-        const modelInp = root.querySelector('#model-input');
-        const keyInp = root.querySelector('#api-key-input');
+        const mInp = root.querySelector('#model-input');
+        const kInp = root.querySelector('#api-key-input');
         const activePill = root.querySelector('.thinking-pill.active');
 
         if (roleSel) this.settings.agent_role = roleSel.value;
         if (pSel) this.settings.provider = pSel.value;
-        if (modelInp) this.settings.model = modelInp.value.trim();
-        if (keyInp) this.settings.api_key = keyInp.value.trim();
+        if (mInp) this.settings.model = mInp.value.trim();
+
+        if (!this.settings.api_keys) this.settings.api_keys = {};
+        if (kInp) {
+          const val = kInp.value.trim();
+          this.settings.api_key = val;
+          if (this.settings.provider) {
+            this.settings.api_keys[this.settings.provider] = val;
+          }
+        }
         if (activePill) this.settings.thinking_level = activePill.getAttribute('data-level');
 
         this.updateHeaderStatusPill();
@@ -2217,12 +2288,16 @@ class AIAgentPanel extends HTMLElement {
   }
 }
 
-if (!customElements.get('ai-agent-panel')) {
-  customElements.define('ai-agent-panel', AIAgentPanel);
-}
-if (!customElements.get('ai-agent-card')) {
-  customElements.define('ai-agent-card', AIAgentPanel);
-}
+try {
+  if (!customElements.get('ai-agent-panel')) {
+    customElements.define('ai-agent-panel', AIAgentPanel);
+  }
+} catch (_) {}
+try {
+  if (!customElements.get('ai-agent-card')) {
+    customElements.define('ai-agent-card', AIAgentPanel);
+  }
+} catch (_) {}
 
 // Register in Lovelace card picker (only once)
 window.customCards = window.customCards || [];
@@ -2234,5 +2309,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.9 (Added Groq Provider & Ultra-Fast Inference)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.7.0 (Multi-Provider Key Memory & Resilient Inference)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

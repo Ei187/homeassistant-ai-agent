@@ -19,6 +19,7 @@ except ImportError:
 from .ai_client import AIClient
 from .const import (
     CONF_API_KEY,
+    CONF_API_KEYS,
     CONF_BASE_URL,
     CONF_MODEL,
     CONF_PROVIDER,
@@ -187,10 +188,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         settings.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
 
     async def _create_client() -> AIClient:
+        provider = settings.get(CONF_PROVIDER, DEFAULT_SETTINGS[CONF_PROVIDER])
+        api_keys = settings.get(CONF_API_KEYS)
+        if isinstance(api_keys, dict) and provider in api_keys and api_keys[provider]:
+            api_key = api_keys[provider]
+        else:
+            api_key = settings.get(CONF_API_KEY, "")
         return AIClient(
-            provider=settings.get(CONF_PROVIDER, DEFAULT_SETTINGS[CONF_PROVIDER]),
+            provider=provider,
             model=settings.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL]),
-            api_key=settings.get(CONF_API_KEY, ""),
+            api_key=api_key,
             base_url=settings.get(CONF_BASE_URL, DEFAULT_SETTINGS[CONF_BASE_URL]),
             thinking_level=settings.get(CONF_THINKING_LEVEL, DEFAULT_SETTINGS[CONF_THINKING_LEVEL]),
         )
