@@ -242,7 +242,19 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     )
 
     history = msg.get("history") or []
-    formatted_messages = list(history)
+    formatted_messages = []
+    for h in history:
+        clean_h = {
+            "role": h.get("role", "user"),
+            "content": h.get("content") or "",
+        }
+        if "tool_calls" in h and h["tool_calls"]:
+            clean_h["tool_calls"] = h["tool_calls"]
+        if "tool_call_id" in h and h["tool_call_id"]:
+            clean_h["tool_call_id"] = h["tool_call_id"]
+        if "name" in h and h["name"]:
+            clean_h["name"] = h["name"]
+        formatted_messages.append(clean_h)
     formatted_messages.append({"role": "user", "content": msg["message"]})
 
     # Streaming chunk and status emitter

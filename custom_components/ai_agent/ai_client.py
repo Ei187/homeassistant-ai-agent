@@ -651,17 +651,26 @@ class AIClient:
         formatted_messages = []
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
-        formatted_messages.extend(messages)
+        for m in messages:
+            clean_m: Dict[str, Any] = {
+                "role": m.get("role", "user"),
+                "content": m.get("content") or "",
+            }
+            if m.get("tool_calls"):
+                clean_m["tool_calls"] = m["tool_calls"]
+            if m.get("tool_call_id"):
+                clean_m["tool_call_id"] = m["tool_call_id"]
+            if m.get("name"):
+                clean_m["name"] = m["name"]
+            formatted_messages.append(clean_m)
 
         payload: Dict[str, Any] = {
             "model": target_model,
             "messages": formatted_messages,
         }
 
-        # Reasoning effort for OpenAI / OpenRouter
-        # Valid values for OpenAI: 'low', 'medium', 'high', 'xhigh'
-        # Never send 'none' or 'off'; simply omit reasoning_effort if off
-        if thinking_level and thinking_level != THINKING_OFF:
+        # Reasoning effort for OpenAI / OpenRouter (omit for Groq and non-reasoning providers)
+        if self.provider not in (PROVIDER_GROQ, PROVIDER_CUSTOM) and thinking_level and thinking_level != THINKING_OFF:
             eff = thinking_level.lower()
             if eff == THINKING_MAX:
                 eff = THINKING_HIGH

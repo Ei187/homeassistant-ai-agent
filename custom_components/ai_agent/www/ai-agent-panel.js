@@ -461,6 +461,16 @@ class AIAgentPanel extends HTMLElement {
       }
     };
 
+    const cleanHistory = this.chatHistory
+      .slice(0, -2)
+      .slice(-8)
+      .filter((m) => m && m.content)
+      .map((m) => {
+        const item = { role: m.role, content: m.content };
+        if (m.tool_calls) item.tool_calls = m.tool_calls;
+        return item;
+      });
+
     try {
       if (this._hass.connection && typeof this._hass.connection.subscribeMessage === 'function') {
         unsub = await this._hass.connection.subscribeMessage(
@@ -499,14 +509,14 @@ class AIAgentPanel extends HTMLElement {
           {
             type: 'ai_agent/chat',
             message: text,
-            history: this.chatHistory.slice(0, -2).slice(-8),
+            history: cleanHistory,
           }
         );
       } else {
         const res = await this._hass.callWS({
           type: 'ai_agent/chat',
           message: text,
-          history: this.chatHistory.slice(0, -2).slice(-8),
+          history: cleanHistory,
         });
         isServerDone = true;
         doneReply = res.reply || '';
@@ -1620,21 +1630,21 @@ class AIAgentPanel extends HTMLElement {
         /* Drawer Overlay */
         .drawer-overlay {
           position: absolute;
-          bottom: 70px;
-          left: 14px;
-          right: 14px;
-          background: rgba(28, 28, 30, 0.98);
+          bottom: 64px;
+          left: 12px;
+          right: 12px;
+          background: rgba(26, 26, 28, 0.98);
           backdrop-filter: blur(40px);
           -webkit-backdrop-filter: blur(40px);
           border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 22px;
-          padding: 20px;
-          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+          border-radius: 18px;
+          padding: 12px 14px;
+          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
           display: none;
           flex-direction: column;
-          gap: 16px;
+          gap: 8px;
           z-index: 50;
-          max-height: 80%;
+          max-height: 85vh;
           overflow-y: auto;
           animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
@@ -1647,100 +1657,104 @@ class AIAgentPanel extends HTMLElement {
           justify-content: space-between;
           align-items: center;
           border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-          padding-bottom: 12px;
+          padding-bottom: 6px;
         }
         .drawer-title {
-          font-size: 16px;
+          font-size: 13.5px;
           font-weight: 700;
           color: #ffffff;
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
         }
         .close-drawer-btn {
           background: transparent;
           border: none;
           color: #a1a1a6;
           border-radius: 50%;
-          width: 28px;
-          height: 28px;
+          width: 24px;
+          height: 24px;
           cursor: pointer;
-          font-size: 14px;
+          font-size: 13px;
         }
         .close-drawer-btn:hover { color: #ffffff; }
 
         /* Separate Selection Rectangle Cards inside Drawer */
         .cards-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          gap: 14px;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 8px;
         }
 
         .pro-card {
-          background: rgba(36, 36, 38, 0.7);
+          background: rgba(36, 36, 38, 0.75);
           border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 18px;
-          padding: 16px;
-          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+          border-radius: 14px;
+          padding: 8px 12px;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+          box-sizing: border-box;
         }
         .card-header {
           display: flex;
           align-items: center;
-          gap: 10px;
-          margin-bottom: 12px;
+          gap: 8px;
+          margin-bottom: 6px;
         }
         .card-icon {
-          width: 30px;
-          height: 30px;
-          border-radius: 9px;
+          width: 24px;
+          height: 24px;
+          border-radius: 7px;
           background: rgba(255, 255, 255, 0.08);
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 15px;
+          font-size: 13px;
         }
         .card-title {
-          font-size: 14px;
+          font-size: 12.5px;
           font-weight: 600;
           color: #f5f5f7;
         }
         .card-subtitle {
-          font-size: 11.5px;
+          font-size: 10.5px;
           color: #86868b;
+          line-height: 1.2;
         }
 
         .pro-select, .pro-input {
           width: 100%;
           background: rgba(0, 0, 0, 0.45);
           border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 12px;
-          padding: 11px 13px;
+          border-radius: 10px;
+          padding: 6px 10px;
           color: #ffffff;
-          font-size: 13.5px;
+          font-size: 12px;
+          height: 34px;
           outline: none;
+          box-sizing: border-box;
         }
         .pro-select:focus, .pro-input:focus {
           border-color: #0a84ff;
-          box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
+          box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.25);
         }
 
         /* Thinking Pills */
         .thinking-pills {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px;
-          margin-top: 8px;
+          gap: 4px;
+          margin-top: 4px;
         }
         .thinking-pill {
           flex: 1;
-          min-width: 50px;
+          min-width: 44px;
           text-align: center;
-          padding: 8px 6px;
-          border-radius: 10px;
+          padding: 6px 2px;
+          border-radius: 8px;
           background: rgba(255, 255, 255, 0.06);
           border: 1px solid rgba(255, 255, 255, 0.08);
           color: #a1a1a6;
-          font-size: 11.5px;
+          font-size: 10.5px;
           font-weight: 600;
           cursor: pointer;
         }
@@ -1773,24 +1787,119 @@ class AIAgentPanel extends HTMLElement {
           border-color: #64d2ff;
           transform: scale(1.15);
         }
-        .info-help-box {
-          background: rgba(20, 20, 24, 0.96);
-          border: 1px solid rgba(100, 210, 255, 0.35);
-          border-radius: 14px;
-          padding: 14px 16px;
-          margin-top: 10px;
-          font-size: 12px;
-          line-height: 1.6;
-          color: #e5e5ea;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+        /* Floating API Key Modal Styles */
+        .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.75);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          padding: 16px;
+          box-sizing: border-box;
+          animation: fadeIn 0.2s ease-out forwards;
         }
-        .info-help-box a {
+        .api-key-floating-card {
+          background: rgba(22, 22, 26, 0.98);
+          border: 1.5px solid rgba(100, 210, 255, 0.35);
+          border-radius: 18px;
+          width: 440px;
+          max-width: 95vw;
+          max-height: 85vh;
+          overflow-y: auto;
+          box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85);
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+        }
+        .modal-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 14px 18px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .modal-card-title {
+          font-size: 14px;
+          font-weight: 700;
           color: #64d2ff;
-          text-decoration: underline;
-          font-weight: 600;
         }
-        .info-help-box a:hover {
+        .modal-card-close {
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          color: #f5f5f7;
+          border-radius: 50%;
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-size: 13px;
+        }
+        .modal-card-close:hover {
+          background: rgba(255, 255, 255, 0.2);
           color: #ffffff;
+        }
+        .modal-card-body {
+          padding: 16px 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          direction: rtl;
+        }
+        .help-section {
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .help-badge {
+          font-size: 12.5px;
+          font-weight: 700;
+          padding: 3px 8px;
+          border-radius: 6px;
+          display: inline-block;
+          width: fit-content;
+        }
+        .help-desc {
+          font-size: 11.5px;
+          color: #a1a1a6;
+          line-height: 1.45;
+        }
+        .help-action-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(10, 132, 255, 0.15);
+          border: 1px solid rgba(10, 132, 255, 0.35);
+          color: #64d2ff;
+          padding: 7px 12px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 600;
+          text-decoration: none;
+          transition: all 0.2s;
+          margin-top: 4px;
+        }
+        .help-action-btn:hover {
+          background: rgba(10, 132, 255, 0.3);
+          color: #ffffff;
+          transform: translateY(-1px);
+        }
+        .help-note {
+          font-size: 11px;
+          color: #86868b;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          padding-top: 8px;
+          line-height: 1.4;
         }
 
         /* Toast */
@@ -1933,7 +2042,7 @@ class AIAgentPanel extends HTMLElement {
                 <select class="pro-select" id="provider-select">
                   <option value="openai" ${s.provider === 'openai' ? 'selected' : ''}>OpenAI</option>
                   <option value="gemini" ${s.provider === 'gemini' ? 'selected' : ''}>Google Gemini</option>
-                  <option value="groq" ${s.provider === 'groq' ? 'selected' : ''}>GroqCloud (סופר מהיר וחינמי)</option>
+                  <option value="groq" ${s.provider === 'groq' ? 'selected' : ''}>GroqCloud</option>
                   <option value="anthropic" ${s.provider === 'anthropic' ? 'selected' : ''}>Anthropic Claude</option>
                   <option value="deepseek" ${s.provider === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
                   <option value="openrouter" ${s.provider === 'openrouter' ? 'selected' : ''}>OpenRouter</option>
@@ -1952,13 +2061,13 @@ class AIAgentPanel extends HTMLElement {
                 </div>
                 <button type="button" id="auto-model-badge-btn" title="בחר מודל עדכני ביותר אוטומטית לפי הספק" style="
                   width: 100%;
-                  margin-bottom: 10px;
+                  margin-bottom: 8px;
                   background: ${(!s.model || s.model === 'auto-latest' || s.model === 'auto') ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)'};
                   border: 1.5px solid ${(!s.model || s.model === 'auto-latest' || s.model === 'auto') ? '#0a84ff' : 'rgba(255, 255, 255, 0.16)'};
                   color: #ffffff;
-                  border-radius: 12px;
-                  padding: 10px 14px;
-                  font-size: 13px;
+                  border-radius: 10px;
+                  padding: 8px 12px;
+                  font-size: 12px;
                   font-weight: 600;
                   cursor: pointer;
                   display: flex;
@@ -1972,9 +2081,9 @@ class AIAgentPanel extends HTMLElement {
                   <span style="display: flex; align-items: center; gap: 6px;">
                     ✨ מודל עדכני ביותר (אוטומטי)
                   </span>
-                  <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 3px 8px; border-radius: 6px; font-family: monospace;">auto-latest</span>
+                  <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 2px 6px; border-radius: 6px; font-family: monospace;">auto-latest</span>
                 </button>
-                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, o3-mini..." />
+                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, llama-3.3-70b-versatile..." />
               </div>
 
               <!-- מלבן 4: רמת חשיבה ומהירות -->
@@ -2004,72 +2113,101 @@ class AIAgentPanel extends HTMLElement {
               <!-- מלבן 5: API Key -->
               <div class="pro-card">
                 <div class="card-header" style="justify-content: space-between;">
-                  <div style="display: flex; align-items: center; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
                     <div class="card-icon">🔑</div>
                     <div>
                       <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
                         <span>5. מפתח API (API Key)</span>
                         <button type="button" id="api-key-help-btn" class="help-question-btn" title="הסבר והנפקת מפתחות API בחינם">?</button>
                       </div>
-                      <div class="card-subtitle">נדרש לחיבור ענן (ללא מפתח: פקודות בית מקומיות בלבד)</div>
+                      <div class="card-subtitle">נדרש לחיבור ענן (ללא מפתח: פקודות בית בלבד)</div>
                     </div>
                   </div>
                 </div>
-                <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
+                <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
                   <input type="password" class="pro-input" id="api-key-input" placeholder="הדבק מפתח API..." value="${s.api_key || ''}" style="flex: 1;" />
                   <button type="button" id="toggle-key-visibility-btn" title="הצג / הסתר מפתח API" style="
                     background: rgba(255, 255, 255, 0.08);
                     border: 1px solid rgba(255, 255, 255, 0.15);
-                    border-radius: 10px;
+                    border-radius: 8px;
                     color: #f5f5f7;
-                    padding: 8px 12px;
+                    padding: 6px 10px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: 16px;
+                    font-size: 15px;
                     line-height: 1;
-                    height: 42px;
+                    height: 34px;
                     box-sizing: border-box;
                     transition: all 0.2s ease;
                   ">
                     👁️
                   </button>
                 </div>
-                <div id="api-key-help-box" class="info-help-box" style="display: none;">
-                  <div style="font-weight: 700; margin-bottom: 8px; color: #64d2ff; font-size: 13px;">🎁 מפתחות API חינמיים ללא עלות וללא צורך במילוי טוקנים:</div>
-                  
-                  <div style="margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
-                    <b>1. Google Gemini (הכי מומלץ – מודל חכם ועדכני):</b><br/>
-                    לחיבור המודל החינמי העדכני של גוגל (כמו באתר Gemini):<br/>
-                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">🎁 לחץ כאן להפקת מפתח Google Gemini בחינם (ללא אשראי)</a><br/>
-                    <span style="color: #a1a1a6; font-size: 11px;">גוגל מעניקה מכסה חינמית מלאה וקבועה של 15 פניות בדקה ומיליון טוקנים – מעל ומעבר לכל צרכי הבית ללא שום עלות.</span>
-                  </div>
-
-                  <div style="margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
-                    <b>2. OpenRouter (גישה למודלים חינמיים שונים):</b><br/>
-                    לחיבור מודלים חינמיים של Llama, DeepSeek ו-Gemini ללא מילוי טוקנים:<br/>
-                    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">🌐 לחץ כאן להפקת מפתח OpenRouter בחינם</a><br/>
-                    <span style="color: #a1a1a6; font-size: 11px;">מאפשר שימוש בכל המודלים המסומנים עם סיומת :free ללא חיוב.</span>
-                  </div>
-
-                  <div style="margin-bottom: 6px;">
-                    <b>3. GroqCloud (מעבדי LPU במהירות שיא):</b><br/>
-                    לחיבור מודלי Llama 3.3 70B בחינם וללא כרטיס אשראי:<br/>
-                    <a href="https://console.groq.com/keys" target="_blank" rel="noopener">⚡ לחץ כאן להפקת מפתח Groq בחינם</a><br/>
-                    <span style="color: #a1a1a6; font-size: 11px;">ניתן להשתמש בו בבחירת ספק 'שרת מקומי / Custom' או דרך OpenRouter.</span>
-                  </div>
-
-                  <div style="margin-top: 8px; font-size: 11px; color: #86868b; border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 6px;">
-                    ℹ️ <b>OpenAI (ChatGPT) / Claude:</b> ספקים אלו דורשים מפתח מחשבון מפתחים בתשלום עם יתרת טוקנים (באתר שלהם השיחה חינם, אך ה-API דורש תקציב).
-                  </div>
-                </div>
               </div>
             </div>
 
-            <button class="pro-pill-btn btn-approve" id="save-drawer-btn" style="margin-top: 8px; padding: 12px;">
+            <button class="pro-pill-btn btn-approve" id="save-drawer-btn" style="margin-top: 8px; padding: 10px;">
               💾 שמור את כל השינויים וסגור
             </button>
+          </div>
+
+          <!-- Floating API Key Modal / Popover -->
+          <div class="modal-backdrop" id="api-key-modal-backdrop" style="display: none;">
+            <div class="api-key-floating-card">
+              <div class="modal-card-header">
+                <div class="modal-card-title">🎁 מפתחות API חינמיים ללא עלות</div>
+                <button type="button" class="modal-card-close" id="close-help-modal-btn" title="סגור">✕</button>
+              </div>
+              <div class="modal-card-body">
+                <div class="help-section">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="help-badge" style="background: rgba(10, 132, 255, 0.2); color: #64d2ff;">1</span>
+                    <b style="font-size: 13px; color: #f5f5f7;">Google Gemini (הכי מומלץ – מודל חכם ועדכני)</b>
+                  </div>
+                  <div class="help-desc">לחיבור המודל החינמי העדכני של גוגל (כמו באתר Gemini):</div>
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="help-action-btn">
+                    🎁 לחץ כאן להפקת מפתח Google Gemini בחינם (ללא אשראי)
+                  </a>
+                  <div class="help-note">
+                    גוגל מעניקה מכסה חינמית מלאה וקבועה של 15 פניות בדקה ומיליון טוקנים – מעל ומעבר לכל צרכי הבית ללא שום עלות.
+                  </div>
+                </div>
+
+                <div class="help-section">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="help-badge" style="background: rgba(255, 159, 10, 0.2); color: #ff9f0a;">2</span>
+                    <b style="font-size: 13px; color: #f5f5f7;">GroqCloud (מעבדי LPU במהירות שיא)</b>
+                  </div>
+                  <div class="help-desc">לחיבור מודלי Llama 3.3 70B בחינם וללא צורך במילוי טוקנים:</div>
+                  <a href="https://console.groq.com/keys" target="_blank" rel="noopener" class="help-action-btn">
+                    ⚡ לחץ כאן להפקת מפתח GroqCloud בחינם
+                  </a>
+                  <div class="help-note">
+                    בחר בספק <b>GroqCloud</b> והדבק את המפתח שהונפק. מהירות תגובה קיצונית של מאות טוקנים בשנייה ללא חיוב.
+                  </div>
+                </div>
+
+                <div class="help-section">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="help-badge" style="background: rgba(48, 209, 88, 0.2); color: #30d158;">3</span>
+                    <b style="font-size: 13px; color: #f5f5f7;">OpenRouter (גישה למודלים חינמיים שונים)</b>
+                  </div>
+                  <div class="help-desc">לחיבור מודלים חינמיים שונים (Llama, DeepSeek, Gemini):</div>
+                  <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" class="help-action-btn">
+                    🌐 לחץ כאן להפקת מפתח OpenRouter בחינם
+                  </a>
+                  <div class="help-note">
+                    מאפשר שימוש בכל המודלים המסומנים עם סיומת <code>:free</code> ללא חיוב.
+                  </div>
+                </div>
+
+                <div style="font-size: 11px; color: #86868b; border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 8px;">
+                  ℹ️ <b>OpenAI (ChatGPT) / Claude:</b> ספקים אלו דורשים מפתח מחשבון מפתחים בתשלום עם יתרת טוקנים (באתר שלהם השיחה חינם, אך ה-API דורש תקציב).
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Chat Input Bar with the "+" Button -->
@@ -2194,16 +2332,30 @@ class AIAgentPanel extends HTMLElement {
       });
     }
 
-    // Help Question Button for Free API Keys
+    // Help Question Button for Free API Keys (Opens floating modal)
     const helpBtn = root.querySelector('#api-key-help-btn');
-    const helpBox = root.querySelector('#api-key-help-box');
-    if (helpBtn && helpBox) {
+    const helpModal = root.querySelector('#api-key-modal-backdrop');
+    const closeHelpModalBtn = root.querySelector('#close-help-modal-btn');
+
+    if (helpBtn && helpModal) {
       helpBtn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const isOpen = helpBox.style.display !== 'none';
-        helpBox.style.display = isOpen ? 'none' : 'block';
-        helpBtn.style.background = isOpen ? 'rgba(255, 255, 255, 0.1)' : 'rgba(100, 210, 255, 0.35)';
+        helpModal.style.display = 'flex';
+      };
+    }
+    if (closeHelpModalBtn && helpModal) {
+      closeHelpModalBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        helpModal.style.display = 'none';
+      };
+    }
+    if (helpModal) {
+      helpModal.onclick = (e) => {
+        if (e.target === helpModal) {
+          helpModal.style.display = 'none';
+        }
       };
     }
 
@@ -2309,5 +2461,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.7.1 (Evidence-Based Architecture: Rollback, Traces & History)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.7.2 (Evidence-Based Architecture: Rollback, Traces & History)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
