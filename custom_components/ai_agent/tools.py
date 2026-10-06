@@ -17,6 +17,11 @@ import yaml
 
 from homeassistant.core import HomeAssistant
 from homeassistant.components import persistent_notification
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -320,18 +325,165 @@ class ToolEngine:
             _LOGGER.exception("Tool execution error in %s: %s", name, err)
             return {"error": str(err)}
 
+    def _resolve_target_entities(self, raw_input: Any, action: str = "turn_on") -> List[str]:
+        """Smart entity & room resolution from natural language, area names, or IDs."""
+        if not raw_input:
+            return []
+
+        candidates = []
+        if isinstance(raw_input, list):
+            candidates = [str(x).strip() for x in raw_input if x]
+        elif isinstance(raw_input, str):
+            candidates = [x.strip() for x in raw_input.split(",") if x.strip()]
+
+        # Common rooms in Hebrew and English
+        room_keywords = {
+            "סלון": ["סלון", "living", "salon"],
+            "מטבח": ["מטבח", "kitchen"],
+            "חדר שינה": ["חדר שינה", "bedroom", "הורים"],
+            "חדר ילדים": ["חדר ילדים", "ילדים", "kids"],
+            "ממ״ד": ["ממד", "ממ\"ד", "shelter"],
+            "מרפסת": ["מרפסת", "balcony"],
+            "חצר": ["חצר", "גינה", "yard", "garden"],
+            "מסדרון": ["מסדרון", "hallway", "corridor"],
+            "שירותים": ["שירותים", "toilet", "wc"],
+            "מקלחת": ["מקלחת", "אמבטיה", "bath", "shower"],
+            "פינת אוכל": ["פינת אוכל", "dining"],
+            "כניסה": ["כניסה", "entrance"],
+            "משרד": ["משרד", "עבודה", "office", "study"],
+        }
+
+        # Domain hint
+        domain_hint = "light"
+        for text in candidates:
+            low = text.lower()
+            if any(w in low for w in ["מזגן", "מיזוג", "ac", "climate"]):
+                domain_hint = "climate"
+                break
+            elif any(w in low for w in ["תריס", "וילון", "cover"]):
+                domain_hint = "cover"
+                break
+            elif any(w in low for w in ["דוד", "מתג", "switch", "בוילר"]):
+                domain_hint = "switch"
+                break
+
+        resolved = []
+        try:
+            area_reg = ar.async_get(self.hass)
+            ent_reg = er.async_get(self.hass)
+            dev_reg = dr.async_get(self.hass)
+        except Exception:
+            area_reg = ent_reg = dev_reg = None
+
+        for item in candidates:
+            # 1. Exact match in state machine
+            if self.hass.states.get(item):
+                resolved.append(item)
+                continue
+
+            # 2. Check if all lights
+            if item.lower() in ("all", "all_lights", "כל האורות", "אורות", "כל האור"):
+                all_lights = [s.entity_id for s in self.hass.states.async_all("light")]
+                return all_lights or ["light.all"]
+
+            # 3. Check against Home Assistant Area Registry
+            clean_item = (
+                item.replace("תכבה את האור ב", "")
+                .replace("תדליק את האור ב", "")
+                .replace("תכבה את האור", "")
+                .replace("תדליק את האור", "")
+                .replace("תכבה את ה", "")
+                .replace("תדליק את ה", "")
+                .replace("תכבה את", "")
+                .replace("תדליק את", "")
+                .replace("תכבה", "")
+                .replace("תדליק", "")
+                .replace("כבה את", "")
+                .replace("כבה", "")
+                .replace("אור ב", "")
+                .replace("אור בסלון", "סלון")
+                .replace("אור במטבח", "מטבח")
+                .replace("אור", "")
+                .strip(" :,-?!")
+                .lower()
+            )
+
+            area_matched_id = None
+            if area_reg:
+                for area in area_reg.async_list_areas():
+                    a_name = area.name.lower()
+                    a_id = area.id.lower()
+                    if clean_item and (clean_item in a_name or clean_item in a_id or a_name in clean_item):
+                        area_matched_id = area.id
+                        break
+                    # Check synonyms
+                    for canon, synonyms in room_keywords.items():
+                        if any(s in clean_item for s in synonyms) and any(s in a_name or s in a_id for s in synonyms):
+                            area_matched_id = area.id
+                            break
+                    if area_matched_id:
+                        break
+
+            if area_matched_id and ent_reg:
+                # Find entities belonging to this area
+                area_entities = []
+                for entity in ent_reg.entities.values():
+                    if entity.disabled:
+                        continue
+                    ea = entity.area_id
+                    if not ea and entity.device_id and dev_reg:
+                        dev = dev_reg.async_get(entity.device_id)
+                        if dev:
+                            ea = dev.area_id
+                    if ea == area_matched_id:
+                        if not domain_hint or entity.domain == domain_hint:
+                            area_entities.append(entity.entity_id)
+
+                # Fallback to switch if no light in area
+                if not area_entities and domain_hint == "light":
+                    for entity in ent_reg.entities.values():
+                        if not entity.disabled and (entity.area_id == area_matched_id) and entity.domain == "switch":
+                            area_entities.append(entity.entity_id)
+
+                if area_entities:
+                    resolved.extend(area_entities)
+                    continue
+
+            # 4. Fuzzy search in state machine friendly_names and entity_ids
+            fuzzy_matches = []
+            for state in self.hass.states.async_all():
+                if domain_hint and state.domain != domain_hint:
+                    continue
+                s_name = (state.name or "").lower()
+                s_id = state.entity_id.lower()
+                if clean_item and (clean_item in s_name or clean_item in s_id):
+                    fuzzy_matches.append(state.entity_id)
+                elif any(syn in s_name or syn in s_id for canon, syns in room_keywords.items() if any(s in clean_item for s in syns) for syn in syns):
+                    fuzzy_matches.append(state.entity_id)
+
+            if fuzzy_matches:
+                resolved.extend(fuzzy_matches)
+                continue
+
+            # If still nothing, preserve original item
+            resolved.append(item)
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique = []
+        for r in resolved:
+            if r not in seen:
+                seen.add(r)
+                unique.append(r)
+        return unique
+
     async def _handle_control_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Control device, strictly requesting user approval when require_approval is True."""
         raw_entity_id = args.get("entity_id", "")
         action = args.get("action", "turn_on")
         params = dict(args.get("parameters") or {})
 
-        entity_ids = []
-        if isinstance(raw_entity_id, list):
-            entity_ids = raw_entity_id
-        elif isinstance(raw_entity_id, str):
-            entity_ids = [e.strip() for e in raw_entity_id.split(",") if e.strip()]
-
+        entity_ids = self._resolve_target_entities(raw_entity_id, action)
         if not entity_ids:
             return {"error": "לא צוין מזהה ישות (entity_id) לביצוע הפעולה."}
 
@@ -359,7 +511,7 @@ class ToolEngine:
                 "created_at": time.time(),
                 "status": "pending_approval",
                 "payload": {
-                    "entity_id": raw_entity_id,
+                    "entity_id": entity_ids,
                     "action": action,
                     "parameters": params,
                 },
@@ -390,17 +542,12 @@ class ToolEngine:
         action = args.get("action", "turn_on")
         params = dict(args.get("parameters") or {})
 
-        entity_ids = []
-        if isinstance(raw_entity_id, list):
-            entity_ids = raw_entity_id
-        elif isinstance(raw_entity_id, str):
-            entity_ids = [e.strip() for e in raw_entity_id.split(",") if e.strip()]
-
+        entity_ids = self._resolve_target_entities(raw_entity_id, action)
         if not entity_ids:
-            return {"error": "לא צוין מזהה ישות (entity_id) לביצוע הפעולה."}
+            return {"error": "לא נמצאה ישות או חדר תואמים לביצוע הפעולה."}
 
         # Handle all lights
-        if len(entity_ids) == 1 and entity_ids[0].lower() in ("all", "all_lights", "כל האורות", "אורות"):
+        if len(entity_ids) == 1 and entity_ids[0].lower() in ("all", "all_lights", "כל האורות", "אורות", "light.all"):
             target_lights = [
                 s.entity_id for s in self.hass.states.async_all("light")
                 if (s.state == "on" if action == "turn_off" else s.state == "off")
@@ -449,7 +596,7 @@ class ToolEngine:
                 "message": f"הפעולה '{action}' בוצעה בהצלחה על: {', '.join(results)}.",
                 "controlled": results,
             }
-        return {"error": f"לא ניתן היה לשלוט בישות '{raw_entity_id}'."}
+        return {"error": f"לא ניתן היה לשלוט בישות או בחדר '{raw_entity_id}'."}
 
     async def _handle_search_github_integrations(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Search GitHub for custom integrations."""
@@ -1140,7 +1287,19 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
 
 
 def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
-    """Format home entities and current states into a clear list for the AI."""
+    """Format home entities, rooms/areas, and current states into a clear list for the AI."""
+    try:
+        area_reg = ar.async_get(hass)
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+    except Exception:
+        area_reg = ent_reg = dev_reg = None
+
+    area_map: Dict[str, Dict[str, Any]] = {}
+    if area_reg:
+        for area in area_reg.async_list_areas():
+            area_map[area.id] = {"name": area.name, "devices": []}
+
     lines = []
     relevant_domains = {
         "light", "switch", "climate", "cover", "fan", "lock",
@@ -1160,6 +1319,20 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
             ]):
                 continue
 
+        area_name = "כללי"
+        if ent_reg:
+            entry = ent_reg.async_get(state.entity_id)
+            if entry:
+                aid = entry.area_id
+                if not aid and entry.device_id and dev_reg:
+                    dev = dev_reg.async_get(entry.device_id)
+                    if dev:
+                        aid = dev.area_id
+                if aid and aid in area_map:
+                    area_name = area_map[aid]["name"]
+                    if domain in ("light", "switch", "climate", "cover", "fan", "lock", "media_player"):
+                        area_map[aid]["devices"].append(f"{state.name or state.entity_id} (`{state.entity_id}`)")
+
         friendly_name = state.attributes.get("friendly_name", state.entity_id)
         current_state = state.state
 
@@ -1173,11 +1346,25 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 150) -> str:
             extra.append(f"brightness: {pct}%")
 
         extra_str = f" ({', '.join(extra)})" if extra else ""
-        lines.append(f"- {state.entity_id} | '{friendly_name}' | state: {current_state}{extra_str}")
+        lines.append(f"- {state.entity_id} | '{friendly_name}' | חדר/אזור: '{area_name}' | state: {current_state}{extra_str}")
         count += 1
         if count >= max_entities:
             break
 
-    if not lines:
-        return "אין ישויות זמינות כרגע."
-    return "\n".join(lines)
+    room_summary_lines = []
+    if area_map:
+        for aid, data in area_map.items():
+            if data["devices"]:
+                dev_list = ", ".join(data["devices"][:8])
+                room_summary_lines.append(f"• **חדר {data['name']}** (מזהה: `{aid}`): {dev_list}")
+
+    output_parts = []
+    if room_summary_lines:
+        output_parts.append("### 🏠 חלוקת מכשירים לפי חדרים ואזורים בבית (Home Areas & Rooms):\n" + "\n".join(room_summary_lines))
+        output_parts.append("### 📋 רשימת ישויות ומצבים חיים (Entities & Current States):\n" + "\n".join(lines))
+    elif lines:
+        output_parts.append("\n".join(lines))
+    else:
+        output_parts.append("אין ישויות זמינות כרגע.")
+
+    return "\n\n".join(output_parts)

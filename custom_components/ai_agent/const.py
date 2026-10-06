@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -44,11 +44,11 @@ DEFAULT_BASE_URLS = {
 
 # Default Known Models (User can freely type/paste ANY model)
 DEFAULT_MODELS = {
-    PROVIDER_OPENAI: ["gpt-6-astra", "o1", "o3-mini", "gpt-4o", "gpt-4o-mini"],
-    PROVIDER_GEMINI: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
-    PROVIDER_ANTHROPIC: ["claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
-    PROVIDER_DEEPSEEK: ["deepseek-reasoner", "deepseek-chat"],
-    PROVIDER_OPENROUTER: ["openai/gpt-6-astra", "anthropic/claude-3.7-sonnet", "deepseek/deepseek-r1"],
+    PROVIDER_OPENAI: ["gpt-4o-mini", "gpt-4o", "o3-mini", "o1", "gpt-6-astra"],
+    PROVIDER_GEMINI: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"],
+    PROVIDER_ANTHROPIC: ["claude-3-5-haiku-20241022", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-opus"],
+    PROVIDER_DEEPSEEK: ["deepseek-chat", "deepseek-reasoner"],
+    PROVIDER_OPENROUTER: ["google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"],
     PROVIDER_CUSTOM: ["llama3.3", "qwen2.5-coder", "mistral-large"],
 }
 

@@ -1822,8 +1822,12 @@ class AIAgentPanel extends HTMLElement {
                     👁️
                   </button>
                 </div>
-                <div style="font-size: 11px; color: #86868b; margin-top: 6px;">
-                  ללא מפתח המערכת תפעל במצב חינמי עד המגבלה. לחץ על העין להצגת או הסתרת המפתח.
+                <div style="font-size: 11.5px; color: #a1a1a6; margin-top: 8px; line-height: 1.5;">
+                  לחיבור המודל החינמי העדכני של גוגל (כמו באתר Gemini):
+                  <br/>
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color: #64d2ff; text-decoration: underline; font-weight: 600;">
+                    🎁 לחץ כאן להפקת מפתח Google Gemini בחינם (ללא אשראי)
+                  </a>
                 </div>
               </div>
             </div>
@@ -1890,11 +1894,11 @@ class AIAgentPanel extends HTMLElement {
         const prov = provSel.value;
         const modelInp = root.querySelector('#model-input');
         const defaultModels = {
-          openai: 'gpt-6-astra',
-          gemini: 'gemini-2.5-pro',
-          anthropic: 'claude-3-7-sonnet',
-          deepseek: 'deepseek-reasoner',
-          openrouter: 'openai/gpt-6-astra',
+          openai: 'gpt-4o-mini',
+          gemini: 'gemini-2.5-flash',
+          anthropic: 'claude-3-5-haiku-20241022',
+          deepseek: 'deepseek-chat',
+          openrouter: 'google/gemini-2.0-flash-exp:free',
           custom: 'llama3.3',
         };
         if (modelInp && defaultModels[prov]) {
@@ -1993,5 +1997,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.6.2 (Live Real-Time Streaming Active)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.6.3 (Area Intelligence & Latest Free Models)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

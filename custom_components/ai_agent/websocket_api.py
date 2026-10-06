@@ -352,11 +352,11 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             reply = f"הכנתי הצעה לאוטומציה לפי בקשתך ('{user_raw}'). היא מוצגת למטה וממתינה לאישורך."
 
         # 9. Direct device control
-        elif not is_question and any(w in user_text for w in ["תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "שנה"]):
+        elif not is_question and any(w in user_text for w in ["תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "כבה", "הדלק"]):
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
             ctrl_res = await tool_engine.execute_tool("control_device", {
-                "entity_id": "all_lights" if "כל האור" in user_text else user_raw,
+                "entity_id": "all_lights" if any(k in user_text for k in ["כל האור", "כל האורות", "כל המנורות"]) else user_raw,
                 "action": action,
             })
             if ctrl_res.get("requires_user_approval"):
@@ -367,13 +367,24 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 })
                 reply = f"הכנתי פקודה ל{ctrl_res['title']}. אשר בכרטיסייה למטה לביצוע."
             else:
-                reply = ctrl_res.get("message", "בוצע.")
+                reply = ctrl_res.get("message") or ctrl_res.get("error", "בוצע.")
+
+        # 10. Greetings & Friendly Small Talk
+        elif any(w in user_text for w in ["שלום", "היי", "מה שלומך", "בוקר טוב", "ערב טוב", "מה נשמע", "מי אתה", "מה קורה", "מה המצב"]):
+            reply = (
+                "שלום! שלומי מצוין, תודה רבה. 😊\n\n"
+                "אני סוכן ה-AI שלך ב-Home Assistant, מחובר לכל המכשירים, החדרים וההגדרות בבית.\n"
+                "תוכל לבקש ממני לשלוט בתאורה ובמיזוג (למשל: `כבה את האור בסלון`), לסרוק תקלות, לבנות אוטומציות או להתקין אינטגרציות מ-GitHub.\n\n"
+                "💡 **רוצה שיחה ואינטליגנציה כמו באתר של Gemini / ChatGPT?**\n"
+                "כרגע אני פועל במצב מקומי. כדי להפעיל את המודלים החינמיים הכי חכמים (כמו **Google Gemini 2.5 Flash** שרץ באתר של גוגל ב-100% חינם), לחץ על ה-`+` למטה והדבק מפתח API חינמי!"
+            )
 
         else:
             reply = (
-                f"קיבלתי את הודעתך: '{user_raw}'. "
-                "אני פועל במצב מקומי ויכול לחפש ולהתקין אינטגרציות מ-GitHub, לערוך קבצים (כמו configuration.yaml ו-SmartIR), לשלוט במכשירים ולבנות אוטומציות. "
-                "לחיבור מודלי-על מתקדמים לחשיבה וניתוח מעמיקים, לחץ על ה-`+` למטה והזן מפתח API."
+                f"קיבלתי: '{user_raw}'.\n\n"
+                "כרגע אני פועל במצב מקומי ללא מפתח API חיצוני (מבצע פקודות ישירות כמו `כבה את האור בסלון` או `סרוק שגיאות`).\n\n"
+                "🧠 **רוצה שאהיה חכם כמו באתר של Gemini / ChatGPT?**\n"
+                "פתח את ה-`+` למטה והזן מפתח API של Google Gemini (חינם לחלוטין ב-Google AI Studio, ללא כרטיס אשראי) – והסוכן יענה על כל שאלה ושיחה חופשית באינטליגנציה מקסימלית!"
             )
 
         # Stream free tier response smoothly in real-time
