@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.7.2"
+VERSION = "1.7.3"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -56,7 +56,7 @@ DEFAULT_MODELS = {
     PROVIDER_ANTHROPIC: [MODEL_AUTO, "claude-3-5-haiku-20241022", "claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-opus"],
     PROVIDER_DEEPSEEK: [MODEL_AUTO, "deepseek-chat", "deepseek-reasoner"],
     PROVIDER_OPENROUTER: [MODEL_AUTO, "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-r1:free"],
-    PROVIDER_GROQ: [MODEL_AUTO, "llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant"],
+    PROVIDER_GROQ: [MODEL_AUTO, "llama-3.1-8b-instant", "qwen-2.5-32b", "deepseek-r1-distill-llama-70b", "mixtral-8x7b-32768", "llama-3.3-70b-versatile"],
     PROVIDER_CUSTOM: [MODEL_AUTO, "llama3.3", "qwen2.5-coder", "mistral-large"],
 }
 

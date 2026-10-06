@@ -205,7 +205,56 @@ class AIClient:
 
         # 6. Groq
         if self.provider == PROVIDER_GROQ:
-            return "llama-3.3-70b-versatile"
+            fallback = "llama-3.1-8b-instant"
+            try:
+                session = await self._get_session()
+                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+                url = "https://api.groq.com/openai/v1/models"
+                async with session.get(url, headers=headers, timeout=8) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw_models = data.get("data", [])
+                        chat_models = [
+                            m for m in raw_models
+                            if m.get("active", True) is not False
+                            and not any(x in str(m.get("id", "")).lower() for x in ("whisper", "guard", "embed", "safetensor", "vision"))
+                        ]
+                        if chat_models:
+                            def _groq_score(m: Dict[str, Any]) -> Tuple[int, int]:
+                                mid = str(m.get("id", "")).lower()
+                                score = 0
+                                if "llama-3.3" in mid:
+                                    score += 100
+                                elif "llama-3.1" in mid:
+                                    score += 90
+                                elif "qwen" in mid:
+                                    score += 85
+                                elif "deepseek" in mid:
+                                    score += 80
+                                elif "gpt-oss" in mid:
+                                    score += 75
+                                elif "llama" in mid:
+                                    score += 65
+                                elif "mixtral" in mid:
+                                    score += 50
+                                elif "gemma" in mid:
+                                    score += 40
+
+                                if "70b" in mid:
+                                    score += 15
+                                elif "8b" in mid:
+                                    score += 20  # Fast and guaranteed quota on free accounts
+
+                                created = int(m.get("created", 0) or 0)
+                                return (score, created)
+
+                            chat_models.sort(key=_groq_score, reverse=True)
+                            chosen = str(chat_models[0]["id"])
+                            _LOGGER.info("Dynamically discovered active Groq model: %s", chosen)
+                            return chosen
+            except Exception as err:
+                _LOGGER.warning("Failed to discover Groq model (%s), using fallback %s", err, fallback)
+            return fallback
 
         # 7. Custom / Local
         if self.provider == PROVIDER_CUSTOM:
@@ -342,7 +391,7 @@ class AIClient:
                     )
                 result["fallback_notice"] = fallback_notice
                 result["actual_thinking_level"] = level
-                result["actual_model"] = active_model
+                result["actual_model"] = result.get("actual_model") or active_model
                 return result
             except aiohttp.ClientResponseError as err:
                 last_error = err
@@ -780,9 +829,45 @@ class AIClient:
                 payload["reasoning_effort"] = next_effort
 
         if data is None:
-            if last_status == 404 and target_model != "gpt-4o-mini" and self.provider == PROVIDER_OPENAI:
-                _LOGGER.warning("Model '%s' returned 404 on OpenAI. Falling back to 'gpt-4o-mini'.", target_model)
-                return await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name="gpt-4o-mini")
+            if last_status == 404:
+                # 1. Groq 404 Auto-Recovery
+                if self.provider == PROVIDER_GROQ:
+                    self._resolved_model_cache = None
+                    groq_candidates = ["llama-3.1-8b-instant", "qwen-2.5-32b", "mixtral-8x7b-32768", "gemma2-9b-it", "deepseek-r1-distill-llama-70b"]
+                    try:
+                        fresh = await self._discover_latest_model()
+                        if fresh and fresh != target_model:
+                            groq_candidates.insert(0, fresh)
+                    except Exception:
+                        pass
+
+                    for cand in groq_candidates:
+                        if cand != target_model:
+                            _LOGGER.warning("Groq model '%s' returned 404. Auto-recovering with '%s'", target_model, cand)
+                            try:
+                                res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=cand)
+                                self._resolved_model_cache = cand
+                                res["actual_model"] = cand
+                                return res
+                            except Exception as fb_err:
+                                _LOGGER.debug("Groq recovery candidate '%s' failed: %s", cand, fb_err)
+                                continue
+
+                # 2. OpenAI 404 Auto-Recovery
+                if self.provider == PROVIDER_OPENAI:
+                    self._resolved_model_cache = None
+                    openai_candidates = ["gpt-4o-mini", "gpt-4o"]
+                    for cand in openai_candidates:
+                        if cand != target_model:
+                            _LOGGER.warning("OpenAI model '%s' returned 404. Auto-recovering with '%s'", target_model, cand)
+                            try:
+                                res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=cand)
+                                self._resolved_model_cache = cand
+                                res["actual_model"] = cand
+                                return res
+                            except Exception:
+                                continue
+
             info, hist = last_resp_info if last_resp_info else (None, ())
             raise aiohttp.ClientResponseError(
                 info,

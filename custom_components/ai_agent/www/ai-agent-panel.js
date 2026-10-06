@@ -464,7 +464,7 @@ class AIAgentPanel extends HTMLElement {
     const cleanHistory = this.chatHistory
       .slice(0, -2)
       .slice(-8)
-      .filter((m) => m && m.content)
+      .filter((m) => m && m.content && !String(m.content).startsWith('⚠️') && !String(m.content).includes('שגיאה בתקשורת'))
       .map((m) => {
         const item = { role: m.role, content: m.content };
         if (m.tool_calls) item.tool_calls = m.tool_calls;
@@ -2083,7 +2083,7 @@ class AIAgentPanel extends HTMLElement {
                   </span>
                   <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 2px 6px; border-radius: 6px; font-family: monospace;">auto-latest</span>
                 </button>
-                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, llama-3.3-70b-versatile..." />
+                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, llama-3.1-8b-instant..." />
               </div>
 
               <!-- מלבן 4: רמת חשיבה ומהירות -->
@@ -2461,5 +2461,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.7.2 (Evidence-Based Architecture: Rollback, Traces & History)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.7.3 (Evidence-Based Architecture: Rollback, Traces & History)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
