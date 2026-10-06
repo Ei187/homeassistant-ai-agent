@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -61,6 +62,12 @@ class AIClient:
         self._external_session = session is not None
         self._resolved_model_cache: Optional[str] = None
         self._resolved_model_timestamp: float = 0.0
+        self._resolve_lock: Optional[asyncio.Lock] = None
+
+    def _get_resolve_lock(self) -> asyncio.Lock:
+        if self._resolve_lock is None:
+            self._resolve_lock = asyncio.Lock()
+        return self._resolve_lock
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -74,24 +81,32 @@ class AIClient:
 
     def is_auto_model(self, model_name: Optional[str] = None) -> bool:
         """Check if model is set to auto-latest."""
-        target = (model_name if model_name is not None else self.model).strip().lower()
-        return not target or target in ("auto-latest", "auto", "default")
+        target = model_name if model_name is not None else self.model
+        if not target:
+            return True
+        target_str = str(target).strip().lower()
+        return not target_str or target_str in ("auto-latest", "auto", "default")
 
-    async def resolve_active_model(self) -> str:
+    async def resolve_active_model(self, model_name: Optional[str] = None) -> str:
         """Resolve active model dynamically if auto-latest is requested, cached for 3 hours."""
-        if not self.is_auto_model():
-            return self.model
+        if not self.is_auto_model(model_name):
+            return (model_name if model_name is not None else self.model).strip()
 
         now = time.time()
         # 3 hours TTL cache (10800 seconds)
         if self._resolved_model_cache and (now - self._resolved_model_timestamp) < (3 * 3600):
             return self._resolved_model_cache
 
-        resolved = await self._discover_latest_model()
-        self._resolved_model_cache = resolved
-        self._resolved_model_timestamp = now
-        _LOGGER.info("Resolved auto-latest model for provider '%s': %s", self.provider, resolved)
-        return resolved
+        async with self._get_resolve_lock():
+            now = time.time()
+            if self._resolved_model_cache and (now - self._resolved_model_timestamp) < (3 * 3600):
+                return self._resolved_model_cache
+
+            resolved = await self._discover_latest_model()
+            self._resolved_model_cache = resolved
+            self._resolved_model_timestamp = now
+            _LOGGER.info("Resolved auto-latest model for provider '%s': %s", self.provider, resolved)
+            return resolved
 
     async def _discover_latest_model(self) -> str:
         """Discover the latest available model for the active provider."""
@@ -102,7 +117,9 @@ class AIClient:
                 return fallback
             try:
                 session = await self._get_session()
-                base = self.base_url or "https://generativelanguage.googleapis.com"
+                base = (self.base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+                if base.endswith("/v1beta") or base.endswith("/v1"):
+                    base = base.rsplit("/", 1)[0]
                 url = f"{base}/v1beta/models?key={self.api_key}"
                 async with session.get(url, timeout=10) as resp:
                     if resp.status == 200:
@@ -119,11 +136,14 @@ class AIClient:
                                 flash_candidates.append(m_name)
 
                         if flash_candidates:
-                            def _gemini_version_key(name: str) -> Tuple[float, int]:
+                            def _gemini_version_key(name: str) -> Tuple[float, int, int]:
+                                low = name.lower()
                                 matches = re.findall(r"(\d+(?:\.\d+)?)", name)
                                 nums = [float(x) for x in matches] if matches else [0.0]
-                                is_preview = 0 if ("preview" in name.lower() or "exp" in name.lower()) else 1
-                                return (nums[0] if nums else 0.0, is_preview)
+                                ver = nums[0] if nums else 0.0
+                                is_preview = 0 if ("preview" in low or "exp" in low) else 1
+                                is_not_lite = 0 if ("lite" in low or "8b" in low) else 1
+                                return (ver, is_not_lite, is_preview)
 
                             flash_candidates.sort(key=_gemini_version_key, reverse=True)
                             return flash_candidates[0]
@@ -192,7 +212,13 @@ class AIClient:
                 async with session.get(url, headers=headers, timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        models = data.get("data") or data.get("models") or []
+                        if isinstance(data, list):
+                            models = data
+                        elif isinstance(data, dict):
+                            models = data.get("data") or data.get("models") or []
+                        else:
+                            models = []
+
                         if models and isinstance(models, list):
                             first = models[0]
                             if isinstance(first, dict):
@@ -208,6 +234,16 @@ class AIClient:
     def get_supported_thinking_levels(self, model_name: Optional[str] = None) -> List[str]:
         """Return list of supported thinking levels for current provider/model."""
         target_model = model_name or self._resolved_model_cache or self.model
+        if self.is_auto_model(target_model):
+            default_map = {
+                PROVIDER_GEMINI: "gemini-2.5-flash",
+                PROVIDER_ANTHROPIC: "claude-3-7-sonnet-latest",
+                PROVIDER_OPENAI: "chatgpt-4o-latest",
+                PROVIDER_DEEPSEEK: "deepseek-chat",
+                PROVIDER_OPENROUTER: "openrouter/auto",
+                PROVIDER_CUSTOM: "llama3.3",
+            }
+            target_model = default_map.get(self.provider, "gpt-4o-mini")
         model_lower = target_model.lower()
 
         # OpenAI

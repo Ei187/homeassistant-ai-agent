@@ -67,6 +67,12 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
     key = safe_settings.get(CONF_API_KEY, "")
     if key and (key.startswith("••••") or key.startswith("****")):
         safe_settings[CONF_API_KEY] = ""
+    client = domain_data.get("client")
+    if client and hasattr(client, "resolve_active_model"):
+        try:
+            safe_settings["resolved_model"] = await client.resolve_active_model()
+        except Exception as err:
+            _LOGGER.debug("Could not pre-resolve model in ws_get_settings: %s", err)
     connection.send_result(msg["id"], safe_settings)
 
 
@@ -133,6 +139,12 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
     key = safe_settings.get(CONF_API_KEY, "")
     if key and (key.startswith("••••") or key.startswith("****")):
         safe_settings[CONF_API_KEY] = ""
+    client = domain_data.get("client")
+    if client and hasattr(client, "resolve_active_model"):
+        try:
+            safe_settings["resolved_model"] = await client.resolve_active_model()
+        except Exception as err:
+            _LOGGER.debug("Could not pre-resolve model in ws_save_settings: %s", err)
 
     connection.send_result(msg["id"], {"success": True, "settings": safe_settings})
 
@@ -507,7 +519,11 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 
-        actual_model = response.get("actual_model") or getattr(client, "model", "")
+        actual_model = (
+            response.get("actual_model")
+            or getattr(client, "_resolved_model_cache", None)
+            or getattr(client, "model", "")
+        )
         connection.send_message(
             websocket_api.event_message(
                 msg["id"],

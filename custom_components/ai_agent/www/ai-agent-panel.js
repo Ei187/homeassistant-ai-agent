@@ -10,7 +10,7 @@ class AIAgentPanel extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.hass = null;
     this.settings = this.loadCachedSettings();
-    this.resolvedModel = localStorage.getItem('ai_agent_pro_resolved_model') || '';
+    this.resolvedModels = this.loadResolvedModels();
     this.chatHistory = this.loadChatHistory();
     this.pendingProposals = [];
     this.isLoading = false;
@@ -18,6 +18,40 @@ class AIAgentPanel extends HTMLElement {
     this.isDrawerOpen = false;
     this.editingIndex = null;
     this._lastCodeBlocks = [];
+  }
+
+  loadResolvedModels() {
+    try {
+      const saved = localStorage.getItem('ai_agent_pro_resolved_models');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (_) {}
+    const legacy = localStorage.getItem('ai_agent_pro_resolved_model');
+    if (legacy && typeof legacy === 'string' && legacy !== 'free-engine') {
+      return { [this.settings?.provider || 'gemini']: legacy };
+    }
+    return {};
+  }
+
+  saveResolvedModels() {
+    try {
+      localStorage.setItem('ai_agent_pro_resolved_models', JSON.stringify(this.resolvedModels || {}));
+    } catch (_) {}
+  }
+
+  setResolvedModel(provider, model) {
+    if (!provider || !model || model === 'free-engine') return;
+    if (!this.resolvedModels) this.resolvedModels = {};
+    this.resolvedModels[provider] = model;
+    this.saveResolvedModels();
+    this.updateHeaderStatusPill();
+  }
+
+  getResolvedModel(provider) {
+    const prov = provider || this.settings?.provider;
+    return (this.resolvedModels && this.resolvedModels[prov]) || '';
   }
 
   loadCachedSettings() {
@@ -106,6 +140,9 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS({ type: 'ai_agent/get_settings' });
       if (res) {
         this.settings = { ...this.settings, ...res };
+        if (res.resolved_model && res.resolved_model !== 'free-engine') {
+          this.setResolvedModel(this.settings.provider, res.resolved_model);
+        }
         this.saveCachedSettings();
         this.syncSettingsToUI();
       }
@@ -192,8 +229,9 @@ class AIAgentPanel extends HTMLElement {
 
     let modelDisplay = s.model || 'auto-latest';
     if (modelDisplay === 'auto-latest' || modelDisplay === 'auto' || !modelDisplay) {
-      if (this.resolvedModel && this.resolvedModel !== 'free-engine') {
-        modelDisplay = `Auto (${this.resolvedModel})`;
+      const activeResolved = this.getResolvedModel(s.provider);
+      if (activeResolved && activeResolved !== 'free-engine') {
+        modelDisplay = `Auto (${activeResolved})`;
       } else {
         modelDisplay = 'Auto';
       }
@@ -223,6 +261,9 @@ class AIAgentPanel extends HTMLElement {
       const res = await this._hass.callWS(payload);
       if (res && res.settings) {
         this.settings = { ...this.settings, ...res.settings };
+        if (res.settings.resolved_model && res.settings.resolved_model !== 'free-engine') {
+          this.setResolvedModel(this.settings.provider, res.settings.resolved_model);
+        }
       }
       this.saveCachedSettings();
       this.closeDrawer();
@@ -383,9 +424,7 @@ class AIAgentPanel extends HTMLElement {
               doneProposals = event.proposals || [];
               doneFallbackNotice = event.fallback_notice || null;
               if (event.actual_model && event.actual_model !== 'free-engine') {
-                this.resolvedModel = event.actual_model;
-                try { localStorage.setItem('ai_agent_pro_resolved_model', event.actual_model); } catch (_) {}
-                this.updateHeaderStatusPill();
+                this.setResolvedModel(this.settings.provider, event.actual_model);
               }
               if (targetText.length === 0 && doneReply) {
                 // If chunks were buffered by network, type entire reply via typewriter
@@ -417,9 +456,7 @@ class AIAgentPanel extends HTMLElement {
         doneProposals = res.proposals || [];
         doneFallbackNotice = res.fallback_notice || null;
         if (res.actual_model && res.actual_model !== 'free-engine') {
-          this.resolvedModel = res.actual_model;
-          try { localStorage.setItem('ai_agent_pro_resolved_model', res.actual_model); } catch (_) {}
-          this.updateHeaderStatusPill();
+          this.setResolvedModel(this.settings.provider, res.actual_model);
         }
         targetText = doneReply;
         startTypewriter();
@@ -867,8 +904,9 @@ class AIAgentPanel extends HTMLElement {
 
     let modelDisplay = s.model || 'auto-latest';
     if (modelDisplay === 'auto-latest' || modelDisplay === 'auto' || !modelDisplay) {
-      if (this.resolvedModel && this.resolvedModel !== 'free-engine') {
-        modelDisplay = `Auto (${this.resolvedModel})`;
+      const activeResolved = this.getResolvedModel(s.provider);
+      if (activeResolved && activeResolved !== 'free-engine') {
+        modelDisplay = `Auto (${activeResolved})`;
       } else {
         modelDisplay = 'Auto';
       }
@@ -1992,6 +2030,7 @@ class AIAgentPanel extends HTMLElement {
           autoBadgeBtn.style.borderColor = '#0a84ff';
           autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
         }
+        this.updateHeaderStatusPill();
       };
     }
 
