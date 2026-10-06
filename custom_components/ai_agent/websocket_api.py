@@ -387,16 +387,80 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "שלום! שלומי מצוין, תודה רבה. 😊\n\n"
                 "אני סוכן ה-AI שלך ב-Home Assistant, מחובר לכל המכשירים, החדרים וההגדרות בבית.\n"
                 "תוכל לבקש ממני לשלוט בתאורה ובמיזוג (למשל: `כבה את האור בסלון`), לסרוק תקלות, לבנות אוטומציות או להתקין אינטגרציות מ-GitHub.\n\n"
-                "💡 **רוצה שיחה ואינטליגנציה כמו באתר של Gemini / ChatGPT?**\n"
-                "כרגע אני פועל במצב מקומי. כדי להפעיל את המודלים החינמיים הכי חכמים (כמו **Google Gemini 2.5 Flash** שרץ באתר של גוגל ב-100% חינם), לחץ על ה-`+` למטה והדבק מפתח API חינמי!"
+                "💡 **רוצה שיחה ואינטליגנציה מקסימלית כמו באתר של Gemini?**\n"
+                "כדי להפעיל את מודל **Google Gemini 2.5 Flash** (שפועל ב-100% חינם ב-Google AI Studio), לחץ על כפתור ה-`+` והזן מפתח API חינמי!"
             )
+
+        # 11. System Improvement & Architecture Suggestions
+        elif any(w in user_text for w in ["הצעות", "לשפר", "המלצות", "תמליץ", "רעיונות", "ייעוץ", "שיפור", "איך לשפר", "בדיקת מערכת", "סרוק בית", "מה לשפר"]):
+            all_states = hass.states.async_all()
+            lights = [s for s in all_states if s.domain == "light"]
+            switches = [s for s in all_states if s.domain == "switch"]
+            climates = [s for s in all_states if s.domain == "climate"]
+            automations = [s for s in all_states if s.domain == "automation"]
+            sensors = [s for s in all_states if s.domain == "sensor"]
+            binary_sensors = [s for s in all_states if s.domain == "binary_sensor"]
+
+            lights_on = [s.name or s.entity_id for s in lights if s.state == "on"]
+            unavail = [s.name or s.entity_id for s in all_states if s.state in ("unavailable", "unknown")]
+
+            low_batt = []
+            for s in sensors:
+                if "battery" in s.entity_id or s.attributes.get("device_class") == "battery":
+                    try:
+                        val = float(s.state)
+                        if val < 20.0:
+                            low_batt.append(f"{s.name or s.entity_id} ({int(val)}%)")
+                    except (ValueError, TypeError):
+                        pass
+
+            err_res = await tool_engine.execute_tool("scan_system_errors", {"limit": 5})
+            has_errors = err_res.get("status") == "ok" and err_res.get("count", 0) > 0
+
+            suggestions = []
+            suggestions.append(f"📊 **סטטוס מערכת נוכחי:**\nנמצאו {len(all_states)} ישויות מחוברות ({len(lights)} תאורות, {len(switches)} מתגים, {len(climates)} מזגנים, {len(automations)} אוטומציות).")
+
+            # Energy / Lights
+            if lights_on:
+                suggestions.append(
+                    f"💡 **ייעול תאורה ואנרגיה:**\n"
+                    f"כרגע דולקים {len(lights_on)} גופי תאורה ({', '.join(lights_on[:4])}{' ועוד' if len(lights_on) > 4 else ''}). "
+                    f"מומלץ להגדיר תרחיש 'לילה טוב' או חיישני נוכחות לכיבוי אוטומטי בחדרים ריקים."
+                )
+            else:
+                suggestions.append("💡 **תאורה ואנרגיה:** כל האורות כבויים כעת – מצב מצוין לחיסכון בחשמל!")
+
+            # Hardware & Maintenance
+            if low_batt:
+                suggestions.append(f"🔋 **תחזוקת סוללות דחופה:**\nנמצאו מכשירים עם סוללה נמוכה מתחת ל-20%: {', '.join(low_batt[:4])}. מומלץ להחליף סוללות בקרוב.")
+            elif unavail:
+                suggestions.append(f"⚠️ **ישויות לא זמינות:**\nנמצאו {len(unavail)} ישויות ללא תקשורת ({', '.join(unavail[:3])}). כדאי לבדוק את אספקת החשמל או קישוריות ה-Zigbee/Wi-Fi שלהן.")
+
+            # Automations
+            if len(automations) < 5:
+                suggestions.append(
+                    "🤖 **הרחבת אוטומציות:**\n"
+                    f"קיימות רק {len(automations)} אוטומציות במערכת. מומלץ ליצור אוטומציית 'יציאה מהבית' (כיבוי כל המכשירים) והתרעות על דלתות/חלונות פתוחים."
+                )
+            else:
+                suggestions.append(f"🤖 **אוטומציות:** מוגדרות {len(automations)} אוטומציות פעילות שמנהלות את הבית בשגרה.")
+
+            # Logs & Errors
+            if has_errors:
+                suggestions.append(f"🔧 **אמינות המערכת:** סריקת הלוגים מצאה {err_res.get('count')} שגיאות או אזהרות אחרונות. רשום לי `סרוק שגיאות` כדי לקבל ניתוח.")
+            else:
+                suggestions.append("✅ **יציבות:** לא נמצאו שגיאות קריטיות פעילות בלוגים.")
+
+            suggestions.append("\nמעוניין שניישם אחד מהשיפורים? פשוט אמור לי (למשל: `צור אוטומציה לכיבוי אורות בלילה`) ואכין כרטיס להטמעה מיידית!")
+            reply = "\n\n".join(suggestions)
 
         else:
             reply = (
-                f"קיבלתי: '{user_raw}'.\n\n"
-                "כרגע אני פועל במצב מקומי ללא מפתח API חיצוני (מבצע פקודות ישירות כמו `כבה את האור בסלון` או `סרוק שגיאות`).\n\n"
-                "🧠 **רוצה שאהיה חכם כמו באתר של Gemini / ChatGPT?**\n"
-                "פתח את ה-`+` למטה והזן מפתח API של Google Gemini (חינם לחלוטין ב-Google AI Studio, ללא כרטיס אשראי) – והסוכן יענה על כל שאלה ושיחה חופשית באינטליגנציה מקסימלית!"
+                f"הבנתי את בקשתך: '{user_raw}'.\n\n"
+                "אני מחובר ישירות ל-Home Assistant ומסוגל לבצע שליטה במכשירים, בניית אוטומציות, סריקת לוגים, חיפוש והתקנת אינטגרציות מ-GitHub.\n\n"
+                "🧠 **לשיחה חופשית ואינטליגנציה מלאה כמו באתר של Gemini:**\n"
+                "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות!\n"
+                "כדי ש-Home Assistant יוכל לתקשר עם השרתים החינמיים של גוגל, יש צורך בהזנת מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+` למטה. ברגע שהמפתח מוגדר, כל שיחה מתבצעת ברמת אינטליגנציה מקסימלית."
             )
 
         # Stream free tier response smoothly in real-time
