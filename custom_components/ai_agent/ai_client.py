@@ -223,7 +223,10 @@ class AIClient:
                             def _groq_score(m: Dict[str, Any]) -> Tuple[int, int]:
                                 mid = str(m.get("id", "")).lower()
                                 score = 0
-                                if "llama-3.3" in mid:
+                                # Prioritize models with highest rate limits and zero OTPM choke
+                                if "llama-3.1-8b-instant" in mid:
+                                    score += 150  # 8,000 OTPM, ultra fast, always available on free tier
+                                elif "llama-3.3" in mid:
                                     score += 100
                                 elif "llama-3.1" in mid:
                                     score += 90
@@ -240,10 +243,10 @@ class AIClient:
                                 elif "gemma" in mid:
                                     score += 40
 
-                                if "70b" in mid:
+                                if "8b" in mid:
+                                    score += 30  # High quota & instant response
+                                elif "70b" in mid:
                                     score += 15
-                                elif "8b" in mid:
-                                    score += 20  # Fast and guaranteed quota on free accounts
 
                                 created = int(m.get("created", 0) or 0)
                                 return (score, created)
@@ -718,6 +721,10 @@ class AIClient:
             "messages": formatted_messages,
         }
 
+        # For Groq: enforce max_tokens = 800 to prevent 429 OTPM limit exceeded
+        if self.provider == PROVIDER_GROQ:
+            payload["max_tokens"] = 800
+
         # Reasoning effort for OpenAI / OpenRouter (omit for Groq and non-reasoning providers)
         if self.provider not in (PROVIDER_GROQ, PROVIDER_CUSTOM) and thinking_level and thinking_level != THINKING_OFF:
             eff = thinking_level.lower()
@@ -829,11 +836,22 @@ class AIClient:
                 payload["reasoning_effort"] = next_effort
 
         if data is None:
+            # Groq 429 Rate Limit Auto-Recovery
+            if last_status == 429 and self.provider == PROVIDER_GROQ and target_model != "llama-3.1-8b-instant":
+                _LOGGER.warning("Groq model '%s' hit rate limit 429. Auto-recovering with 'llama-3.1-8b-instant'", target_model)
+                try:
+                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name="llama-3.1-8b-instant")
+                    self._resolved_model_cache = "llama-3.1-8b-instant"
+                    res["actual_model"] = "llama-3.1-8b-instant"
+                    return res
+                except Exception as fb_err:
+                    _LOGGER.debug("Groq 429 recovery candidate failed: %s", fb_err)
+
             if last_status == 404:
                 # 1. Groq 404 Auto-Recovery
                 if self.provider == PROVIDER_GROQ:
                     self._resolved_model_cache = None
-                    groq_candidates = ["llama-3.1-8b-instant", "qwen-2.5-32b", "mixtral-8x7b-32768", "gemma2-9b-it", "deepseek-r1-distill-llama-70b"]
+                    groq_candidates = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "qwen-2.5-32b", "mixtral-8x7b-32768", "gemma2-9b-it"]
                     try:
                         fresh = await self._discover_latest_model()
                         if fresh and fresh != target_model:

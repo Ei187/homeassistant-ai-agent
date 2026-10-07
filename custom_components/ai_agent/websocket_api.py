@@ -7,11 +7,12 @@ import json
 import logging
 import uuid
 from typing import Any, Dict
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
-
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -219,6 +220,51 @@ async def ws_resolve_action(hass: HomeAssistant, connection: websocket_api.Activ
     approved = msg["approved"]
     result = await async_resolve_action(hass, action_id, approved)
     connection.send_result(msg["id"], result)
+
+
+async def _call_free_cloud_ai(
+    messages: list[Dict[str, Any]],
+    session: aiohttp.ClientSession,
+    on_chunk: Any = None,
+) -> str | None:
+    """Call free public AI inference without API key, with live streaming."""
+    url = "https://text.pollinations.ai/"
+    payload = {
+        "messages": messages,
+        "model": "openai-fast",
+        "stream": True,
+    }
+    accumulated: list[str] = []
+    try:
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=35)) as resp:
+            if resp.status == 200:
+                async for raw_line in resp.content:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        choices = chunk.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            text_piece = delta.get("content")
+                            if text_piece:
+                                accumulated.append(text_piece)
+                                if on_chunk:
+                                    await on_chunk(text_piece)
+                    except Exception:
+                        continue
+                result_text = "".join(accumulated).strip()
+                if result_text:
+                    return result_text
+            else:
+                _LOGGER.warning("Free Cloud AI returned status %s", resp.status)
+    except Exception as err:
+        _LOGGER.warning("Free Cloud AI call failed: %s", err)
+    return None
 
 
 @websocket_api.websocket_command({
@@ -527,26 +573,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             else:
                 reply = ctrl_res.get("message") or ctrl_res.get("error", "בוצע.")
 
-        # 10. Greetings & Friendly Small Talk
-        elif any(w in user_text for w in ["שלום", "היי", "מה שלומך", "בוקר טוב", "ערב טוב", "מה נשמע", "מי אתה", "מה קורה", "מה המצב"]):
-            p_title, p_desc = {
-                "openai": ("OpenAI (ChatGPT)", "באתר של ChatGPT השיחה חינם דרך הדפדפן, אך עבור חיבור מערכות (API) נדרש מפתח של OpenAI. ניתן גם להזין מפתח חינמי של Google Gemini בכפתור ה-`+`."),
-                "gemini": ("Google Gemini", "מודל Google Gemini 2.5 Flash פועל ב-100% חינם ב-Google AI Studio (ללא כרטיס אשראי). הזן מפתח חינמי בכפתור ה-`+` כדי להפעיל שיחה חופשית מלאה."),
-                "anthropic": ("Anthropic Claude", "לחיבור ישיר למודל Claude נדרש מפתח API בכפתור ה-`+`."),
-                "deepseek": ("DeepSeek", "לחיבור ישיר למודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
-                "openrouter": ("OpenRouter", "לחיבור למודלים החינמיים (:free) ב-OpenRouter הזן מפתח בכפתור ה-`+`."),
-                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
-            }.get(provider, ("AI", "הזן מפתח API מתאים בכפתור ה-`+`."))
-
-            reply = (
-                f"שלום! שלומי מצוין, תודה רבה. 😊\n\n"
-                f"אני סוכן ה-AI שלך ב-Home Assistant (ספק מוגדר: **{p_title}**), מחובר לכל המכשירים, החדרים וההגדרות בבית.\n"
-                f"תוכל לבקש ממני לשלוט בתאורה ובמיזוג (למשל: `כבה את האור בסלון`), לסרוק תקלות, לבנות אוטומציות או להתקין אינטגרציות מ-GitHub.\n\n"
-                f"💡 **רוצה שיחה ואינטליגנציה מקסימלית בשפה חופשית?**\n"
-                f"{p_desc}"
-            )
-
-        # 11. System Improvement & Architecture Suggestions
+        # 10. System Improvement & Architecture Suggestions
         elif any(w in user_text for w in ["הצעות", "לשפר", "המלצות", "תמליץ", "רעיונות", "ייעוץ", "שיפור", "איך לשפר", "בדיקת מערכת", "סרוק בית", "מה לשפר"]):
             all_states = hass.states.async_all()
             lights = [s for s in all_states if s.domain == "light"]
@@ -609,41 +636,67 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             suggestions.append("\nמעוניין שניישם אחד מהשיפורים? פשוט אמור לי (למשל: `צור אוטומציה לכיבוי אורות בלילה`) ואכין כרטיס להטמעה מיידית!")
             reply = "\n\n".join(suggestions)
 
-        # 12. User Confusion or Bot Complaints ("איזה בקשה הבנת", "בוט בלי מוח", "?")
-        elif any(w in user_text for w in ["איזה בקשה", "מה הבנת", "לא הבנת", "לא ביקשתי", "בוט בלי מוח", "מטומטם", "טיפש", "למה אתה בוט"]) or user_raw.strip() in ("?", "??", "???"):
-            p_title, p_desc = {
-                "openai": ("OpenAI (ChatGPT)", "באתר chatgpt.com השיחה חינם בדפדפן, אך עבור Home Assistant (תוכנה חיצונית) OpenAI דורשת מפתח API מ-platform.openai.com. (למסלול חינמי מלא ללא עלות ב-Home Assistant, בחר ב-Google Gemini או GroqCloud למעלה!)."),
-                "gemini": ("Google Gemini", "מודל Gemini 2.5 Flash חינמי לחלוטין (ללא אשראי) ב-Google AI Studio. הזן מפתח חינמי בכפתור ה-`+` כדי להפעיל שיחה חופשית מלאה."),
-                "anthropic": ("Anthropic Claude", "לחיבור מודל Claude נדרש מפתח API בכפתור ה-`+`."),
-                "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek נדרש מפתח API בכפתור ה-`+`."),
-                "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים ב-OpenRouter נדרש מפתח בכפתור ה-`+`."),
-                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
-            }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
-
-            reply = (
-                "אתה צודק לחלוטין. כרגע לא הוגדר מפתח API, ולכן המערכת אינה מחוברת למוח ה-AI של שרתי הענן אלא רצה במצב פקודות מקומי בלבד.\n\n"
-                "במצב זה אני יודע לבצע אך ורק פקודות ישירות על הבית (כמו `כבה את האור בסלון`, `מה דולק עכשיו`, `סרוק שגיאות`).\n\n"
-                f"🧠 **כדי לחבר את המוח המלא ולשוחח חופשי באינטליגנציה מקסימלית:**\n"
-                f"{p_desc}"
-            )
-
+        # 11. Zero-Key Real AI Engine (Free Public Cloud AI)
+        # Streams live LLM intelligence in Hebrew for any question, chat or request when no API key is entered
         else:
-            p_title, p_desc = {
-                "openai": ("OpenAI", "הספק שנבחר הוא **OpenAI**. באתר ChatGPT השיחה חינם בדפדפן, אך קישור Home Assistant דורש מפתח API. לשימוש ב-100% חינם ללא תשלום, מומלץ לבחור ב-**Google Gemini** או **GroqCloud** (מפתחות חינם לחלוטין ללא אשראי) או להזין מפתח OpenAI בכפתור ה-`+`."),
-                "gemini": ("Google Gemini", "המודל החינמי **Google Gemini 2.5 Flash** (ב-Google AI Studio) הוא בדיוק אותו מודל חכם ומתקדם שרץ באתר ללא שום הבדל ביכולות! להפעלתו, הזן מפתח API חינמי (ללא כרטיס אשראי) בכפתור ה-`+`."),
-                "anthropic": ("Anthropic Claude", "לחיבור מודל Claude, הזן מפתח API בכפתור ה-`+`."),
-                "deepseek": ("DeepSeek", "לחיבור מודל DeepSeek, הזן מפתח API בכפתור ה-`+`."),
-                "openrouter": ("OpenRouter", "לחיבור מודלים חינמיים (:free) ב-OpenRouter, הזן מפתח בכפתור ה-`+`."),
-                "groq": ("GroqCloud", "מודלי Llama 3.3 70B פועלים במהירות שיא ובחינם ב-GroqCloud. הזן מפתח חינמי מ-console.groq.com/keys בכפתור ה-`+`."),
-            }.get(provider, ("AI", "הזן מפתח API בכפתור ה-`+`."))
+            send_status("חושב ומעבד תשובה...")
+            session = async_get_clientsession(hass)
+            compact_ctx = get_entities_context(hass, max_entities=15, compact=True)
+            free_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "אתה סוכן AI חכם, מקצועי ומועיל של Home Assistant (עוזר בית חכם מתקדם). "
+                        "ענה תמיד בעברית רהוטה, ברורה, מדויקת ומעוצבת יפה ב-Markdown. "
+                        "עזור למשתמש בכל שאלה, הסבר מושגים, הצע פתרונות, נהל שיחה חופשית והיה שירותי וידידותי.\n\n"
+                        f"### מכשירים בבית:\n{compact_ctx}"
+                    ),
+                }
+            ]
+            for h in formatted_messages[-4:]:
+                free_messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
 
+            free_reply = await _call_free_cloud_ai(free_messages, session, on_chunk=on_stream_chunk)
+            if free_reply:
+                connection.send_message(
+                    websocket_api.event_message(
+                        msg["id"],
+                        {
+                            "type": "done",
+                            "reply": free_reply,
+                            "fallback_notice": None,
+                            "actual_thinking_level": "free",
+                            "actual_model": "Free Cloud AI (Zero-Key)",
+                            "proposals": proposals,
+                        },
+                    )
+                )
+                connection.send_result(
+                    msg["id"],
+                    {
+                        "reply": free_reply,
+                        "fallback_notice": None,
+                        "actual_thinking_level": "free",
+                        "actual_model": "Free Cloud AI (Zero-Key)",
+                        "proposals": proposals,
+                    },
+                )
+                return
+
+            p_title = {
+                "openai": "OpenAI",
+                "gemini": "Google Gemini",
+                "anthropic": "Anthropic Claude",
+                "deepseek": "DeepSeek",
+                "openrouter": "OpenRouter",
+                "groq": "GroqCloud",
+            }.get(provider, "AI")
             reply = (
                 "אני מחובר כרגע בחיבור מקומי ל-Home Assistant ומסוגל לבצע פקודות ישירות על הבית (שליטה במכשירים, כיבוי/הדלקה, סריקת לוגים ועריכת קבצים).\n\n"
-                f"🧠 **לשיחה חופשית ואינטליגנציה מלאה של {p_title}:**\n"
-                f"{p_desc}"
+                f"🧠 לחיבור מפתח ענן ייעודי של {p_title}, לחץ על כפתור ה-`+` בהגדרות."
             )
 
-        # Stream free tier response smoothly in real-time
+        # Stream fast local response smoothly in real-time
         send_status("מעבד נתונים...")
         await asyncio.sleep(0.04)
         words = reply.split(" ")
@@ -659,8 +712,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                     "type": "done",
                     "reply": reply,
                     "fallback_notice": None,
-                    "actual_thinking_level": "free",
-                    "actual_model": "free-engine",
+                    "actual_thinking_level": "local",
+                    "actual_model": "local-direct (0 tokens)",
                     "proposals": proposals,
                 },
             )
@@ -670,8 +723,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             {
                 "reply": reply,
                 "fallback_notice": None,
-                "actual_thinking_level": "free",
-                "actual_model": "free-engine",
+                "actual_thinking_level": "local",
+                "actual_model": "local-direct (0 tokens)",
                 "proposals": proposals,
             },
         )
