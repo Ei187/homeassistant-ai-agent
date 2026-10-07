@@ -599,38 +599,51 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         return
 
     try:
-        # Prepare token-optimized system prompt with live home entity context
-        is_groq = (provider == PROVIDER_GROQ)
-        if is_groq:
-            active_base_prompt = (
-                "אתה סוכן AI בכיר ועוצמתי ל-Home Assistant. יש לך גישה מלאה לכל המכשירים, הלוגים וההגדרות בבית.\n"
-                "עקרונות: פתור בעיות מהשורש, בדוק ראיות בשטח (לוגים/קבצים), פעל בבטיחות (הכן כרטיס אישור לשינויים), "
-                "הגב בקצרה לפקודות פשוטות, וענה בעברית טבעית ומקצועית ב-Markdown."
-            )
-            entities_text = get_entities_context(hass, max_entities=30, compact=True)
-        else:
-            active_base_prompt = base_prompt
-            entities_text = get_entities_context(hass, max_entities=60, compact=False)
+        user_raw = msg["message"]
+        user_lower = user_raw.lower()
 
-        full_system_prompt = (
-            f"{active_base_prompt}\n\n"
-            f"### רשימת המכשירים והישויות בבית (Home Entities & Current States):\n"
-            f"{entities_text}\n\n"
-            "הנחיות קריטיות:\n"
-            "1. יש לך סמכויות וכלים מלאים לבצע הכל במערכת Home Assistant (control_device, scan_system_errors, edit_config_file, search_github_integrations וכו').\n"
-            "2. איסור מוחלט: לעולם ובשום אופן אל תגיד 'אין לי כלים', 'אני לא מצליח להתחבר לשירותים שלי', 'איני יכול לבצע פעולות' או 'יש בעיות טכניות פנימיות'. אתה מחובר ישירות ל-Home Assistant ומפעיל פקודות ישירות דרך כלי המערכת.\n"
-            "3. כאשר המשתמש מבקש פעולה פשוטה (כיבוי/הדלקת אור, מזגן, בדיקת סטטוס): הפעל מיד את הכלי המתאים וענה במשפט אחד קצר ואלגנטי. בתקלות או בניית אוטומציות: חקור ביסודיות.\n"
-            "4. כל פעולה שמשנה קובץ, אוטומציה או שליטה במכשיר מציגה כרטיס אישור מסודר למשתמש.\n"
-            "5. ענה תמיד בעברית טבעית, מדויקת ומעוצבת ב-Markdown."
-        )
+        # Classify user intent for ultra-low token consumption
+        is_device_control = any(kw in user_lower for kw in [
+            "תדליק", "תכבה", "הדלק", "כבה", "פתח", "סגור", "שים", "טמפרטורה", "מיזוג",
+            "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
+        ])
+        is_system_admin = any(kw in user_lower for kw in [
+            "שגיא", "לוג", "תקל", "אוטומצי", "קובץ", "התקן", "אינטגרצי", "github", "yaml",
+            "סרוק", "בדיק", "reload", "restart", "גיבוי"
+        ])
+
+        if not is_device_control and not is_system_admin:
+            # 1. Pure Chat / Knowledge / Question Mode -> Ultra-lean: ~20 tokens total!
+            active_tools = None
+            full_system_prompt = "אתה סוכן AI אינטליגנטי ל-Home Assistant. ענה בצורה בהירה, מועילה וקולחת בעברית ב-Markdown."
+        elif is_device_control and not is_system_admin:
+            # 2. Simple Device Control Mode -> Lean: ~150 tokens total!
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("control_device", "search_entities")]
+            entities_text = get_entities_context(hass, max_entities=25, compact=True)
+            full_system_prompt = (
+                "אתה סוכן בית חכם ל-Home Assistant. שלוט במכשירים לפי בקשת המשתמש בעזרת הכלי control_device, "
+                "וענה במשפט אחד קצר, מדויק ואלגנטי בעברית.\n\n"
+                f"### מכשירים פעילים:\n{entities_text}"
+            )
+        else:
+            # 3. Full Engineering / Diagnostic Mode -> Optimized context: ~1,500 tokens
+            active_tools = TOOLS_SCHEMA
+            is_groq = (provider == PROVIDER_GROQ)
+            max_ent = 30 if is_groq else 50
+            entities_text = get_entities_context(hass, max_entities=max_ent, compact=True)
+            full_system_prompt = (
+                f"{base_prompt}\n\n"
+                f"### ישויות במערכת:\n{entities_text}\n\n"
+                "הנחיות: פתור בעיות מהשורש, בדוק ראיות (לוגים/קבצים), פעל בבטיחות וענה בעברית ב-Markdown."
+            )
 
         send_status("מעבד נתונים...")
 
-        # Step 1: Call Model with Tools
+        # Step 1: Call Model with Dynamically Filtered Tools
         response = await client.chat(
             messages=formatted_messages,
             system_prompt=full_system_prompt,
-            tools=TOOLS_SCHEMA,
+            tools=active_tools,
             on_chunk=on_stream_chunk,
         )
 
