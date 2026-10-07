@@ -1822,8 +1822,13 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
         return {"success": False, "error": f"שגיאה בהפעלת השינוי: {err}"}
 
 
-def get_entities_context(hass: HomeAssistant, max_entities: int = 50, compact: bool = False) -> str:
-    """Format home entities, rooms/areas, and current states into a clear list for the AI."""
+def get_entities_context(
+    hass: HomeAssistant,
+    max_entities: int = 50,
+    compact: bool = False,
+    query_filter: Optional[str] = None,
+) -> str:
+    """Format home entities, rooms/areas, and current states with ultra-lean token footprint."""
     try:
         area_reg = ar.async_get(hass)
         ent_reg = er.async_get(hass)
@@ -1836,24 +1841,59 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 50, compact: b
         for area in area_reg.async_list_areas():
             area_names[area.id] = area.name
 
-    lines = []
-    # Prioritize actionable entities first
     actionable_domains = ("light", "climate", "switch", "cover", "fan", "lock", "media_player")
     secondary_domains = ("sensor", "binary_sensor", "automation")
-
     all_states = hass.states.async_all()
-    # Sort: actionable domains first
-    sorted_states = sorted(
-        all_states,
-        key=lambda s: (0 if s.domain in actionable_domains else 1, s.entity_id)
-    )
 
+    # Extract keywords from user query if provided
+    query_words = set()
+    if query_filter:
+        stop_words = {
+            "את", "של", "עם", "כל", "זה", "על", "לי", "תדליק", "תכבה", "הדלק", "כבה",
+            "שלוט", "שים", "פתח", "סגור", "turn", "on", "off", "the", "to", "in", "a",
+            "רוצה", "בבקשה", "תעשה", "יכול", "אפשר", "האם", "שלום", "היי"
+        }
+        for w in query_filter.lower().split():
+            clean_w = w.strip(" :,-?!'\"()[]{}")
+            if len(clean_w) >= 2 and clean_w not in stop_words:
+                query_words.add(clean_w)
+
+    def _entity_score(state) -> int:
+        score = 0
+        s_id = state.entity_id.lower()
+        s_name = (state.attributes.get("friendly_name") or "").lower()
+        s_area = ""
+        if ent_reg:
+            e = ent_reg.async_get(state.entity_id)
+            if e and e.area_id in area_names:
+                s_area = area_names[e.area_id].lower()
+        for qw in query_words:
+            if qw in s_id or qw in s_name or (s_area and qw in s_area):
+                score += 25
+        if state.domain in actionable_domains:
+            score += 2
+        return score
+
+    if query_words:
+        scored = [(state, _entity_score(state)) for state in all_states]
+        matched = [s for s, sc in scored if sc >= 25]
+        if matched:
+            sorted_states = matched
+            max_entities = min(max_entities, 5)
+        else:
+            sorted_states = sorted(all_states, key=lambda s: (0 if s.domain in actionable_domains else 1, s.entity_id))
+            max_entities = min(max_entities, 6)
+    else:
+        sorted_states = sorted(all_states, key=lambda s: (0 if s.domain in actionable_domains else 1, s.entity_id))
+        max_entities = min(max_entities, 8)
+
+    lines = []
     count = 0
     for state in sorted_states:
         domain = state.domain
         if domain not in actionable_domains and domain not in secondary_domains:
             continue
-        if domain in ("sensor", "binary_sensor"):
+        if domain in ("sensor", "binary_sensor") and not query_words:
             s_id = state.entity_id.lower()
             s_name = (state.name or "").lower()
             if not any(k in s_id or k in s_name for k in [
@@ -1862,41 +1902,21 @@ def get_entities_context(hass: HomeAssistant, max_entities: int = 50, compact: b
             ]):
                 continue
 
-        area_name = ""
-        if ent_reg:
-            entry = ent_reg.async_get(state.entity_id)
-            if entry:
-                aid = entry.area_id
-                if not aid and entry.device_id and dev_reg:
-                    dev = dev_reg.async_get(entry.device_id)
-                    if dev:
-                        aid = dev.area_id
-                if aid and aid in area_names:
-                    area_name = area_names[aid]
-
-        friendly_name = state.attributes.get("friendly_name") or state.entity_id
         current_state = state.state
-
+        friendly_name = state.attributes.get("friendly_name") or state.entity_id
         if compact:
-            loc = f", {area_name}" if area_name else ""
-            lines.append(f"- {state.entity_id} ({friendly_name}{loc}): {current_state}")
+            lines.append(f"{state.entity_id} ({friendly_name}): {current_state}")
         else:
             extra = []
-            if "current_temperature" in state.attributes:
-                extra.append(f"temp: {state.attributes['current_temperature']}°C")
             if "temperature" in state.attributes:
-                extra.append(f"target: {state.attributes['temperature']}°C")
-            if "brightness" in state.attributes and state.attributes["brightness"]:
-                pct = round((state.attributes["brightness"] / 255) * 100)
-                extra.append(f"brightness: {pct}%")
+                extra.append(f"{state.attributes['temperature']}°C")
             extra_str = f" ({', '.join(extra)})" if extra else ""
-            area_str = f" | חדר: '{area_name}'" if area_name else ""
-            lines.append(f"- {state.entity_id} | '{friendly_name}'{area_str} | state: {current_state}{extra_str}")
+            lines.append(f"{state.entity_id} ({friendly_name}): {current_state}{extra_str}")
 
         count += 1
         if count >= max_entities:
             break
 
     if lines:
-        return "### 📋 רשימת ישויות ומצבים חיים (Entities & Current States):\n" + "\n".join(lines)
-    return "אין ישויות זמינות כרגע."
+        return "\n".join(lines)
+    return ""

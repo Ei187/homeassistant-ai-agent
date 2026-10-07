@@ -366,6 +366,7 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         override_thinking_level: Optional[str] = None,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Send chat request with automatic fallback on API error."""
         active_model = await self.resolve_active_model()
@@ -382,7 +383,13 @@ class AIClient:
         for level in trial_levels:
             try:
                 result = await self._execute_chat(
-                    messages, system_prompt, tools, thinking_level=level, on_chunk=on_chunk, active_model=active_model
+                    messages,
+                    system_prompt,
+                    tools,
+                    thinking_level=level,
+                    on_chunk=on_chunk,
+                    active_model=active_model,
+                    max_tokens=max_tokens,
                 )
                 # If we had to drop down further at runtime
                 if level != resolved_level:
@@ -429,19 +436,20 @@ class AIClient:
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
         active_model: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Internal dispatch to appropriate provider API."""
         target_model = active_model or await self.resolve_active_model()
         if self.provider == PROVIDER_ANTHROPIC:
-            res = await self._call_anthropic(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+            res = await self._call_anthropic(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
         elif self.provider == PROVIDER_GEMINI and not self.base_url.endswith("/v1"):
-            res = await self._call_gemini_native(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+            res = await self._call_gemini_native(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
         # Default OpenAI-compatible endpoint (OpenAI, DeepSeek, OpenRouter, Custom, or Gemini OpenAI compatibility)
         elif self.provider == PROVIDER_OPENAI and "api.openai.com" in self.base_url:
             # If fast response or streaming requested, prefer standard /v1/chat/completions with SSE
             if on_chunk is not None or thinking_level == THINKING_OFF:
                 try:
-                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
                 except Exception as err:
                     _LOGGER.warning("OpenAI streaming chat/completions failed (%s). Falling back to responses API.", err)
                     res = None
@@ -450,12 +458,12 @@ class AIClient:
 
             if res is None:
                 try:
-                    res = await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+                    res = await self._call_openai_responses(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
                 except Exception as err:
                     _LOGGER.warning("OpenAI Responses API failed (%s). Falling back to /v1/chat/completions.", err)
-                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+                    res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
         else:
-            res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model)
+            res = await self._call_openai_compatible(messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=target_model, max_tokens=max_tokens)
 
         res["actual_model"] = target_model
         return res
@@ -468,6 +476,7 @@ class AIClient:
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
         model_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call OpenAI /v1/responses (supports function tools + reasoning together)."""
         session = await self._get_session()
@@ -526,6 +535,8 @@ class AIClient:
             "input": input_items,
             "store": False,
         }
+        if max_tokens:
+            payload["max_output_tokens"] = max_tokens
         if system_prompt:
             payload["instructions"] = system_prompt
 
@@ -690,6 +701,7 @@ class AIClient:
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
         model_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call standard OpenAI compatible endpoint."""
         session = await self._get_session()
@@ -721,9 +733,10 @@ class AIClient:
             "messages": formatted_messages,
         }
 
-        # For Groq: enforce max_tokens = 800 to prevent 429 OTPM limit exceeded
-        if self.provider == PROVIDER_GROQ:
-            payload["max_tokens"] = 800
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        elif self.provider == PROVIDER_GROQ:
+            payload["max_tokens"] = 600
 
         # Reasoning effort for OpenAI / OpenRouter (omit for Groq and non-reasoning providers)
         if self.provider not in (PROVIDER_GROQ, PROVIDER_CUSTOM) and thinking_level and thinking_level != THINKING_OFF:
@@ -922,6 +935,7 @@ class AIClient:
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
         model_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call Anthropic Claude API."""
         session = await self._get_session()
@@ -973,7 +987,7 @@ class AIClient:
         payload: Dict[str, Any] = {
             "model": target_model,
             "messages": formatted_messages,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens or 1024,
         }
 
         if system_prompt:
@@ -1082,6 +1096,7 @@ class AIClient:
         thinking_level: str,
         on_chunk: Optional[Callable[[str], Awaitable[None]]] = None,
         model_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call Google Gemini REST API."""
         session = await self._get_session()
@@ -1145,12 +1160,14 @@ class AIClient:
                 })
             payload["tools"] = [{"functionDeclarations": func_decls}]
 
-        # Thinking config for Gemini
+        gen_config: Dict[str, Any] = {}
+        if max_tokens:
+            gen_config["maxOutputTokens"] = max_tokens
         if thinking_level != THINKING_OFF:
             budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
-            payload["generationConfig"] = {
-                "thinkingConfig": {"thinkingBudget": budget}
-            }
+            gen_config["thinkingConfig"] = {"thinkingBudget": budget}
+        if gen_config:
+            payload["generationConfig"] = gen_config
 
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:

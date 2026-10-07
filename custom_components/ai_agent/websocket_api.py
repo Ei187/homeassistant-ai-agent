@@ -288,12 +288,17 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     )
 
     history = msg.get("history") or []
+    # Extreme Lean History: keep only the last 2 messages (1 user, 1 assistant) to cut history tokens by 80%
+    trimmed_history = history[-2:] if len(history) > 2 else history
     formatted_messages = []
-    for h in history:
+    for h in trimmed_history:
         content = h.get("content") or ""
         # Strip out error notices from previous turns so they don't mislead the LLM
         if str(content).startswith("⚠️") or "שגיאה בתקשורת" in str(content):
             continue
+        # Truncate past turns to max 200 characters to prevent token ballooning
+        if len(str(content)) > 200:
+            content = str(content)[:200] + "..."
         clean_h = {
             "role": h.get("role", "user"),
             "content": content,
@@ -734,49 +739,71 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         user_raw = msg["message"]
         user_lower = user_raw.lower()
 
-        # Classify user intent for ultra-low token consumption
-        is_device_control = any(kw in user_lower for kw in [
+        # Ultra-Lean Dynamic Tool Injection (Send only 0-2 tools relevant to request)
+        is_automation = any(k in user_lower for k in ("אוטומצי", "automation", "trigger", "תרחיש", "סצנ"))
+        is_config_file = any(k in user_lower for k in ("קובץ", "yaml", "configuration", "config", "ערוך קובץ", "שמור קובץ"))
+        is_error_scan = any(k in user_lower for k in ("לוג", "שגיא", "תקל", "log", "error", "סרוק"))
+        is_github_install = any(k in user_lower for k in ("אינטגרצי", "התקן", "תתקין", "github", "גיטהאב", "מאגר"))
+        is_restart = any(k in user_lower for k in ("restart", "reload", "הפעל מחדש", "ריסטרט", "טען מחדש"))
+        is_device_ctrl = any(kw in user_lower for kw in [
             "תדליק", "תכבה", "הדלק", "כבה", "פתח", "סגור", "שים", "טמפרטורה", "מיזוג",
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
         ])
-        is_system_admin = any(kw in user_lower for kw in [
-            "שגיא", "לוג", "תקל", "אוטומצי", "קובץ", "התקן", "אינטגרצי", "github", "yaml",
-            "סרוק", "בדיק", "reload", "restart", "גיבוי"
-        ])
 
-        if not is_device_control and not is_system_admin:
-            # 1. Pure Chat / Knowledge / Question Mode -> Ultra-lean: ~20 tokens total!
-            active_tools = None
-            full_system_prompt = "אתה סוכן AI אינטליגנטי ל-Home Assistant. ענה בצורה בהירה, מועילה וקולחת בעברית ב-Markdown."
-        elif is_device_control and not is_system_admin:
-            # 2. Simple Device Control Mode -> Lean: ~150 tokens total!
-            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("control_device", "search_entities")]
-            entities_text = get_entities_context(hass, max_entities=25, compact=True)
+        target_max_tokens = 250
+        if is_automation:
+            # Send ONLY create_automation tool (~60 tokens for tool schema!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "create_automation"]
+            entities_text = get_entities_context(hass, max_entities=5, compact=True, query_filter=user_raw)
             full_system_prompt = (
-                "אתה סוכן בית חכם ל-Home Assistant. שלוט במכשירים לפי בקשת המשתמש בעזרת הכלי control_device, "
-                "וענה במשפט אחד קצר, מדויק ואלגנטי בעברית.\n\n"
-                f"### מכשירים פעילים:\n{entities_text}"
+                "אתה סוכן אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
+                + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
+            target_max_tokens = 450
+        elif is_config_file:
+            # Send ONLY config tools (~80 tokens!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("edit_config_file", "read_config_file")]
+            full_system_prompt = "אתה מומחה תצורה ב-Home Assistant. קרא או ערוך קבצים וענה בעברית ב-Markdown."
+            target_max_tokens = 400
+        elif is_error_scan:
+            # Send ONLY error tool (~40 tokens!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "scan_system_errors"]
+            full_system_prompt = "אתה מאבחן מערכת ב-Home Assistant. סרוק שגיאות וסכם אותן בעברית."
+            target_max_tokens = 250
+        elif is_github_install:
+            # Send ONLY GitHub tools (~80 tokens!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("search_github_integrations", "install_custom_component")]
+            full_system_prompt = "אתה מנהל רכיבים ב-Home Assistant. חפש או התקן אינטגרציות מ-GitHub."
+            target_max_tokens = 250
+        elif is_restart:
+            # Send ONLY restart tool (~40 tokens!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "restart_or_reload"]
+            full_system_prompt = "אתה מנהל שרת Home Assistant. בצע בדיקת תקינות או הפעלה מחדש לבקשת המשתמש."
+            target_max_tokens = 150
+        elif is_device_ctrl:
+            # Send ONLY control_device tool and matched entities (~40 tokens tool + ~15 tokens entities!)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "control_device"]
+            entities_text = get_entities_context(hass, max_entities=5, compact=True, query_filter=user_raw)
+            full_system_prompt = (
+                "אתה סוכן בית חכם. שלוט במכשירים בעזרת הכלי control_device וענה במשפט קצר בעברית.\n"
+                + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
+            )
+            target_max_tokens = 120
         else:
-            # 3. Full Engineering / Diagnostic Mode -> Optimized context: ~1,500 tokens
-            active_tools = TOOLS_SCHEMA
-            is_groq = (provider == PROVIDER_GROQ)
-            max_ent = 30 if is_groq else 50
-            entities_text = get_entities_context(hass, max_entities=max_ent, compact=True)
-            full_system_prompt = (
-                f"{base_prompt}\n\n"
-                f"### ישויות במערכת:\n{entities_text}\n\n"
-                "הנחיות: פתור בעיות מהשורש, בדוק ראיות (לוגים/קבצים), פעל בבטיחות וענה בעברית ב-Markdown."
-            )
+            # Pure Chat / Knowledge / Question Mode -> ZERO TOOLS! ZERO ENTITIES! (~10 tokens total!)
+            active_tools = None
+            full_system_prompt = "אתה סוכן AI אינטליגנטי ל-Home Assistant. ענה בצורה בהירה, תמציתית ומדויקת בעברית ב-Markdown."
+            target_max_tokens = 300
 
         send_status("מעבד נתונים...")
 
-        # Step 1: Call Model with Dynamically Filtered Tools
+        # Step 1: Call Model with Dynamically Filtered Tools and Target Max Tokens
         response = await client.chat(
             messages=formatted_messages,
             system_prompt=full_system_prompt,
             tools=active_tools,
             on_chunk=on_stream_chunk,
+            max_tokens=target_max_tokens,
         )
 
         fallback_notice = response.get("fallback_notice")
