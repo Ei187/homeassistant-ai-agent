@@ -280,19 +280,98 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             )
         )
 
+    user_raw = msg["message"]
+    user_text = user_raw.lower()
+    proposals = []
+
+    is_question = (
+        "?" in user_raw
+        or any(q in user_text for q in [
+            "האם", "איך", "מה אתה", "אתה יכול", "תוכל", "אפשר", "יכולים",
+            "לעשות הכל", "כלים לעשות", "מה היכולות", "מה אתה יודע", "למה", "מדוע", "הסבר", "ספר"
+        ])
+    )
+
+    # -------------------------------------------------------------------------
+    # ZERO-TOKEN FAST PATH: Direct Local Home Commands
+    # ALWAYS executes locally in 5ms with 0 TOKENS (whether API key exists or not!)
+    # -------------------------------------------------------------------------
+    is_direct_device_control = not is_question and any(w in user_text for w in [
+        "תדליק", "תכבה", "תפעיל", "תסגור", "turn on", "turn off", "כבה", "הדלק",
+        "תפתח", "פתח", "סגור", "שים מזגן"
+    ])
+    is_direct_whats_on = any(w in user_text for w in ["מה דולק", "איזה אורות דולקים", "מה פועל", "מה עובד"])
+    is_direct_scan_logs = not is_question and any(w in user_text for w in [
+        "סרוק לוגים", "סרוק שגיאות", "בדוק שגיאות בלוגים", "בדוק שגיאות", "סרוק תקלות", "סריקת לוגים"
+    ])
+
+    if is_direct_device_control or is_direct_whats_on or is_direct_scan_logs:
+        send_status("מבצע פעולה מקומית (0 טוקנים)...")
+        await asyncio.sleep(0.02)
+        if is_direct_device_control:
+            is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
+            action = "turn_off" if is_off else "turn_on"
+            ctrl_res = await tool_engine.execute_tool("control_device", {
+                "entity_id": "all_lights" if any(k in user_text for k in ["כל האור", "כל האורות", "כל המנורות"]) else user_raw,
+                "action": action,
+            })
+            if ctrl_res.get("requires_user_approval"):
+                proposals.append({
+                    "id": ctrl_res["action_id"],
+                    "title": ctrl_res["title"],
+                    "yaml_preview": ctrl_res["yaml_preview"],
+                })
+                reply = f"הכנתי פקודה ל{ctrl_res['title']}. אשר בכרטיסייה למטה לביצוע."
+            else:
+                reply = ctrl_res.get("message") or ctrl_res.get("error", "בוצע בהצלחה.")
+        elif is_direct_whats_on:
+            active = [s.name or s.entity_id for s in hass.states.async_all() if s.domain in ("light", "switch") and s.state == "on"]
+            if active:
+                reply = f"המכשירים שדולקים כרגע בבית ({len(active)}): {', '.join(active[:15])}."
+            else:
+                reply = "כל האורות והמתגים בבית כבויים כרגע. 🌙"
+        else:
+            errors_res = await tool_engine.execute_tool("scan_system_errors", {"limit": 10})
+            if errors_res.get("status") == "ok":
+                reply = "סרקתי את המערכת מקומית: לא נמצאו שגיאות קריטיות פעילות בלוגים של Home Assistant! 🎉"
+            else:
+                count = errors_res.get("count", 0)
+                reply = f"סרקתי את המערכת מקומית: נמצאו {count} שגיאות או אזהרות בלוגים."
+
+        # Stream fast local response smoothly
+        words = reply.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else word + " "
+            await on_stream_chunk(chunk)
+            await asyncio.sleep(0.01)
+
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {
+                    "type": "done",
+                    "reply": reply,
+                    "fallback_notice": None,
+                    "actual_thinking_level": "local",
+                    "actual_model": "local-direct (0 tokens)",
+                    "proposals": proposals,
+                },
+            )
+        )
+        connection.send_result(
+            msg["id"],
+            {
+                "reply": reply,
+                "fallback_notice": None,
+                "actual_thinking_level": "local",
+                "actual_model": "local-direct (0 tokens)",
+                "proposals": proposals,
+            },
+        )
+        return
+
     # If no API key is provided, run in Smart Free Tier mode
     if not api_key:
-        user_raw = msg["message"]
-        user_text = user_raw.lower()
-        proposals = []
-
-        is_question = (
-            "?" in user_raw
-            or any(q in user_text for q in [
-                "האם", "איך", "מה אתה", "אתה יכול", "תוכל", "אפשר", "יכולים",
-                "לעשות הכל", "כלים לעשות", "מה היכולות", "מה אתה יודע"
-            ])
-        )
 
         # 1. Capability / General Questions
         if is_question and any(w in user_text for w in ["מה אתה", "יכול לעשות", "מה היכולות", "לעשות הכל", "כלים לעשות", "יודע לעשות"]):
