@@ -205,7 +205,38 @@ class AIClient:
 
         # 4. Anthropic Claude
         if self.provider == PROVIDER_ANTHROPIC:
-            return "claude-3-7-sonnet-latest"
+            fallback = "claude-3-7-sonnet-20250219"
+            try:
+                session = await self._get_session()
+                headers = {
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+                url = "https://api.anthropic.com/v1/models"
+                async with session.get(url, headers=headers, timeout=8) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        raw_models = data.get("data", [])
+                        if raw_models:
+                            def _anthropic_score(m: Dict[str, Any]) -> Tuple[int, str]:
+                                mid = str(m.get("id", "")).lower()
+                                score = 0
+                                if "3-7-sonnet" in mid or "3.7-sonnet" in mid or "sonnet-3-7" in mid:
+                                    score += 100
+                                elif "3-5-sonnet" in mid or "3.5-sonnet" in mid or "sonnet-3-5" in mid:
+                                    score += 85
+                                elif "3-5-haiku" in mid or "3.5-haiku" in mid or "haiku-3-5" in mid:
+                                    score += 70
+                                elif "opus" in mid:
+                                    score += 60
+                                return (score, mid)
+                            raw_models.sort(key=_anthropic_score, reverse=True)
+                            chosen = str(raw_models[0]["id"])
+                            _LOGGER.info("Dynamically discovered active Anthropic model: %s", chosen)
+                            return chosen
+            except Exception as err:
+                _LOGGER.warning("Failed to discover Anthropic model (%s), using fallback %s", err, fallback)
+            return fallback
 
         # 5. DeepSeek
         if self.provider == PROVIDER_DEEPSEEK:
@@ -302,10 +333,11 @@ class AIClient:
         if self.is_auto_model(target_model):
             default_map = {
                 PROVIDER_GEMINI: "gemini-2.5-flash",
-                PROVIDER_ANTHROPIC: "claude-3-7-sonnet-latest",
+                PROVIDER_ANTHROPIC: "claude-3-7-sonnet-20250219",
                 PROVIDER_OPENAI: "chatgpt-4o-latest",
                 PROVIDER_DEEPSEEK: "deepseek-chat",
                 PROVIDER_OPENROUTER: "openrouter/auto",
+                PROVIDER_GROQ: "llama-3.1-8b-instant",
                 PROVIDER_CUSTOM: "llama3.3",
             }
             target_model = default_map.get(self.provider, "gpt-4o-mini")
@@ -955,6 +987,18 @@ class AIClient:
             "anthropic-version": "2023-06-01",
         }
 
+        # Normalize Anthropic model aliases / snapshots to official API identifiers
+        low_target = target_model.lower()
+        if "3-7" in low_target or "3.7" in low_target:
+            if "20250219" not in target_model:
+                target_model = "claude-3-7-sonnet-20250219"
+        elif "3-5-sonnet" in low_target or "3.5-sonnet" in low_target:
+            if "20241022" not in target_model and not target_model.endswith("-latest"):
+                target_model = "claude-3-5-sonnet-20241022"
+        elif "3-5-haiku" in low_target or "3.5-haiku" in low_target:
+            if "20241022" not in target_model and not target_model.endswith("-latest"):
+                target_model = "claude-3-5-haiku-20241022"
+
         formatted_messages = []
         for m in messages:
             role = m.get("role")
@@ -1024,6 +1068,29 @@ class AIClient:
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:
                 err_text = await resp.text()
+                # Auto-recovery on 404 (model not found), 503 (high demand), or 429 (rate limits)
+                if resp.status in (404, 503, 429):
+                    _LOGGER.warning("Anthropic model '%s' returned status %s (%s). Attempting auto-recovery.", target_model, resp.status, err_text[:120])
+                    anthropic_fallbacks = [
+                        "claude-3-7-sonnet-20250219",
+                        "claude-3-5-sonnet-20241022",
+                        "claude-3-5-haiku-20241022",
+                    ]
+                    for fb_model in anthropic_fallbacks:
+                        if fb_model != target_model:
+                            try:
+                                _LOGGER.info("Auto-recovering Anthropic with '%s'", fb_model)
+                                res = await self._call_anthropic(
+                                    messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=fb_model, max_tokens=max_tokens
+                                )
+                                self._resolved_model_cache = fb_model
+                                res["actual_model"] = fb_model
+                                res["fallback_notice"] = f"ℹ️ המודל `{target_model}` החזיר שגיאה ({resp.status}). המערכת עברה אוטומטית למודל יציב: `{fb_model}`."
+                                return res
+                            except Exception as fb_err:
+                                _LOGGER.debug("Anthropic recovery candidate '%s' failed: %s", fb_model, fb_err)
+                                continue
+
                 raise aiohttp.ClientResponseError(
                     resp.request_info,
                     resp.history,
