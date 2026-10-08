@@ -137,14 +137,22 @@ class AIClient:
                                 flash_candidates.append(m_name)
 
                         if flash_candidates:
-                            def _gemini_version_key(name: str) -> Tuple[float, int, int]:
+                            def _gemini_version_key(name: str) -> Tuple[int, float, int]:
                                 low = name.lower()
+                                score = 0
+                                # Prioritize rock-solid GA models with guaranteed capacity and no 503 spikes
+                                if "2.5-flash" in low and "preview" not in low and "exp" not in low:
+                                    score += 100  # High availability GA
+                                elif "2.0-flash" in low and "preview" not in low and "exp" not in low:
+                                    score += 85
+                                elif "1.5-flash" in low and "preview" not in low and "exp" not in low:
+                                    score += 70
+
                                 matches = re.findall(r"(\d+(?:\.\d+)?)", name)
                                 nums = [float(x) for x in matches] if matches else [0.0]
                                 ver = nums[0] if nums else 0.0
                                 is_preview = 0 if ("preview" in low or "exp" in low) else 1
-                                is_not_lite = 0 if ("lite" in low or "8b" in low) else 1
-                                return (ver, is_not_lite, is_preview)
+                                return (score, ver, is_preview)
 
                             flash_candidates.sort(key=_gemini_version_key, reverse=True)
                             return flash_candidates[0]
@@ -1172,6 +1180,25 @@ class AIClient:
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:
                 err_text = await resp.text()
+                # Auto-recovery on 503 (high demand spikes), 429 (rate limits), or 404 (model not found)
+                if resp.status in (503, 429, 404):
+                    _LOGGER.warning("Gemini model '%s' returned status %s (%s). Attempting auto-recovery.", target_model, resp.status, err_text[:120])
+                    gemini_fallbacks = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+                    for fb_model in gemini_fallbacks:
+                        if fb_model != target_model:
+                            try:
+                                _LOGGER.info("Auto-recovering Gemini with '%s'", fb_model)
+                                res = await self._call_gemini_native(
+                                    messages, system_prompt, tools, thinking_level, on_chunk=on_chunk, model_name=fb_model, max_tokens=max_tokens
+                                )
+                                self._resolved_model_cache = fb_model
+                                res["actual_model"] = fb_model
+                                res["fallback_notice"] = f"ℹ️ המודל `{target_model}` בעומס זמני בשרתי Google ({resp.status}). המערכת עברה אוטומטית למודל יציב: `{fb_model}`."
+                                return res
+                            except Exception as fb_err:
+                                _LOGGER.debug("Gemini fallback candidate '%s' failed: %s", fb_model, fb_err)
+                                continue
+
                 raise aiohttp.ClientResponseError(
                     resp.request_info,
                     resp.history,
