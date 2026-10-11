@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import urllib.parse
@@ -21,6 +22,7 @@ import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.components import persistent_notification
 from homeassistant.helpers import (
+    aiohttp_client,
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
@@ -375,6 +377,76 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_esphome_device",
+            "description": "מנהל רכיבי ומכשירי ESPHome ב-Home Assistant: מציג את כל המכשירים המוגדרים והמחוברים (list), קורא תצורת YAML של מכשיר (read), יוצר מכשיר חדש (create), עורך תצורת מכשיר קיים (edit), או מסיר מכשיר (delete). פעולות יצירה, עריכה והסרה דורשות אישור משתמש עם תצוגת Diff וגיבוי אוטומטי.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "read", "create", "edit", "delete"],
+                        "description": "הפעולה לביצוע: 'list' (הצגת כל המכשירים), 'read' (קריאת הגדרות מכשיר), 'create' (יצירת מכשיר חדש), 'edit' (עריכת הגדרות קיים), 'delete' (הסרת מכשיר)",
+                    },
+                    "device_name": {
+                        "type": "string",
+                        "description": "שם המכשיר או קובץ ה-YAML ללא סיומת (למשל 'living_room_temp', 'esp32_relay', 'temp_sensor')",
+                    },
+                    "yaml_content": {
+                        "type": "string",
+                        "description": "תוכן ה-YAML המלא או המעודכן עבור create או edit",
+                    },
+                    "target_content": {
+                        "type": "string",
+                        "description": "קטע ספציפי להחלפה (אופציונלי עבור edit במצב replace)",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["overwrite", "replace", "append"],
+                        "description": "מצב עריכה: 'overwrite' לדריסה מלאה (ברירת מחדל), 'replace' להחלפת קטע, 'append' להוספה בסוף",
+                        "default": "overwrite",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "הסבר בעברית מדוע השינוי מבוצע ומה הוא מוסיף או מתקן",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_ha_addon",
+            "description": "מנהל הרחבות ואפליקציות (Add-ons / Apps ב-Home Assistant OS / Supervised): מציג רשימת הרחבות מותקנות וסטטוס (list), מציג פרטים מלאים והגדרות קונפיגורציה (info), שולף לוגים של האפליקציה לאבחון ותיקון תקלות (logs), מפעיל (start), מכבה (stop), מפעיל מחדש (restart), עורך הגדרות קונפיגורציה (edit_options), מתקין אפליקציה חדשה (install), או מסיר אפליקציה (uninstall). פעולות עריכת הגדרות, התקנה והסרה דורשות אישור משתמש.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "info", "logs", "start", "stop", "restart", "edit_options", "install", "uninstall"],
+                        "description": "הפעולה לביצוע על ההרחבה/אפליקציה",
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "מזהה ההרחבה (Slug באנגלית, למשל 'core_mosquitto', 'core_samba', 'esphome', 'a0d7b954_nodered', 'zigbee2mqtt')",
+                    },
+                    "options": {
+                        "type": "object",
+                        "description": "מילון הגדרות/קונפיגורציה חדש עבור edit_options (למשל {'log_level': 'info', 'port': 1883})",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "הסבר בעברית מדוע הפעולה מבוצעת, ומה היא מתקנת או משנה",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 
@@ -425,6 +497,10 @@ class ToolEngine:
                 return await self._handle_get_entity_history(args)
             if name == "get_automation_traces":
                 return await self._handle_get_automation_traces(args)
+            if name == "manage_esphome_device":
+                return await self._handle_manage_esphome_device(args)
+            if name == "manage_ha_addon":
+                return await self._handle_manage_ha_addon(args)
             return {"error": f"Unknown tool name: {name}"}
         except Exception as err:
             _LOGGER.exception("Tool execution error in %s: %s", name, err)
@@ -1310,6 +1386,433 @@ class ToolEngine:
             "status": "ok" if (state or yaml_def or traces_found) else "not_found",
         }
 
+    async def _handle_manage_esphome_device(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Manage ESPHome devices: list, read, create, edit, delete."""
+        action = args.get("action", "list")
+        device_name = str(args.get("device_name") or "").strip()
+        yaml_content = args.get("yaml_content") or ""
+        target_content = args.get("target_content") or ""
+        mode = args.get("mode", "overwrite")
+        reason = args.get("reason", "ניהול מכשיר ESPHome")
+
+        esphome_dir = os.path.join(self.hass.config.config_dir, "esphome")
+        os.makedirs(esphome_dir, exist_ok=True)
+
+        if action == "list":
+            yaml_files = []
+            if os.path.exists(esphome_dir):
+                for fname in sorted(os.listdir(esphome_dir)):
+                    if fname.endswith(".yaml") and fname != "secrets.yaml":
+                        fpath = os.path.join(esphome_dir, fname)
+                        mtime = datetime.fromtimestamp(os.path.getmtime(fpath)).isoformat()
+                        size = os.path.getsize(fpath)
+                        dev_id = fname[:-5]
+                        yaml_files.append({
+                            "device_name": dev_id,
+                            "filename": fname,
+                            "size_bytes": size,
+                            "last_modified": mtime,
+                        })
+
+            ha_esphome_entries = []
+            for entry in self.hass.config_entries.async_entries("esphome"):
+                ha_esphome_entries.append({
+                    "title": entry.title,
+                    "entry_id": entry.entry_id,
+                    "state": str(entry.state),
+                    "domain": entry.domain,
+                })
+
+            has_secrets = os.path.exists(os.path.join(esphome_dir, "secrets.yaml"))
+
+            return {
+                "status": "ok",
+                "count": len(yaml_files),
+                "esphome_directory": "/config/esphome/",
+                "has_secrets_file": has_secrets,
+                "yaml_devices": yaml_files,
+                "connected_ha_devices": ha_esphome_entries,
+            }
+
+        if not device_name:
+            return {"error": "נא לציין device_name עבור הפעולה המבוקשת."}
+
+        safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", device_name.replace(".yaml", "").lower())
+        file_name = f"{safe_name}.yaml"
+        rel_path = f"esphome/{file_name}"
+        full_path = os.path.join(esphome_dir, file_name)
+
+        if action == "read":
+            if not os.path.exists(full_path):
+                return {"error": f"קובץ ה-ESPHome '{file_name}' אינו קיים בתיקיית /config/esphome/."}
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                return {
+                    "status": "ok",
+                    "device_name": safe_name,
+                    "file_path": rel_path,
+                    "lines": len(content.splitlines()),
+                    "yaml_content": content,
+                }
+            except Exception as err:
+                return {"error": f"שגיאה בקריאת הקובץ: {err}"}
+
+        if action in ("create", "edit"):
+            if not yaml_content:
+                return {"error": "נא לספק yaml_content עבור יצירה או עריכה של מכשיר ESPHome."}
+
+            try:
+                yaml.safe_load(yaml_content)
+            except Exception as y_err:
+                return {"error": f"❌ שגיאת תחביר ב-YAML של ESPHome:\n{y_err}\nנא לתקן את הסינטקס לפני השמירה."}
+
+            existing_text = ""
+            if os.path.exists(full_path):
+                if action == "create":
+                    return {"error": f"מכשיר ESPHome בשם '{safe_name}' כבר קיים (/config/{rel_path}). השתמש ב-'edit' לעדכון."}
+                with open(full_path, "r", encoding="utf-8") as f:
+                    existing_text = f.read()
+
+            if mode == "append" and existing_text:
+                sep = "\n\n" if not existing_text.endswith("\n\n") else ""
+                proposed_text = existing_text + sep + yaml_content + "\n"
+            elif mode == "replace" and target_content and existing_text:
+                if target_content not in existing_text:
+                    return {"error": f"הקטע להחלפה target_content לא נמצא בתוך '{file_name}'."}
+                proposed_text = existing_text.replace(target_content, yaml_content, 1)
+            else:
+                proposed_text = yaml_content
+
+            diff_lines = list(difflib.unified_diff(
+                existing_text.splitlines(keepends=True),
+                proposed_text.splitlines(keepends=True),
+                fromfile=f"before/{rel_path}",
+                tofile=f"after/{rel_path}",
+                lineterm="",
+            ))
+            diff_preview = "".join(diff_lines) if diff_lines else "(ללא שינוי)"
+
+            preview = (
+                f"# מכשיר ESPHome: {safe_name}\n"
+                f"# קובץ: /config/{rel_path}\n"
+                f"# פעולה: {action} ({mode})\n"
+                f"# סיבה: {reason}\n"
+                f"# בטיחות: ייווצר גיבוי אוטומטי ב-/config/.ai_agent_backups/!\n\n"
+                f"=== 🔍 תצוגת שינויים (Diff) ===\n"
+                f"{diff_preview if existing_text else proposed_text}"
+            )
+
+            if not self.require_approval:
+                _create_file_backup(self.hass.config.config_dir, rel_path)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(proposed_text)
+                return {"status": "ok", "message": f"מכשיר ESPHome '{safe_name}' נשמר בהצלחה ב-/config/{rel_path}!"}
+
+            action_id = f"act_{uuid.uuid4().hex[:8]}"
+            payload = {
+                "action": action,
+                "device_name": safe_name,
+                "file_path": rel_path,
+                "content": proposed_text,
+                "mode": "overwrite",
+                "reason": reason,
+            }
+            proposal = {
+                "id": action_id,
+                "type": "manage_esphome_device",
+                "title": f"ESPHome: {'יצירת' if action == 'create' else 'עריכת'} מכשיר {safe_name}",
+                "description": reason,
+                "yaml_preview": preview,
+                "created_at": time.time(),
+                "status": "pending_approval",
+                "payload": payload,
+            }
+            PENDING_ACTIONS[action_id] = proposal
+
+            persistent_notification.async_create(
+                self.hass,
+                f"**סוכן AI מציע {'ליצור' if action == 'create' else 'לערוך'} מכשיר ESPHome:** `{safe_name}`\n\n"
+                f"סיבה: {reason}\n\n"
+                f"פתח את חלון הסוכן כדי לאשר או לדחות.",
+                title=f"🤖 ממתין לאישורך: ESPHome {safe_name}",
+                notification_id=f"ai_agent_{action_id}",
+            )
+
+            return {
+                "requires_user_approval": True,
+                "action_id": action_id,
+                "title": f"ESPHome: {'יצירת' if action == 'create' else 'עריכת'} מכשיר {safe_name}",
+                "yaml_preview": preview,
+                "message": f"הכנתי את הגדרות ה-ESPHome עבור '{safe_name}'. אנא אשר את השינוי כדי להחילו במערכת.",
+            }
+
+        if action == "delete":
+            if not os.path.exists(full_path):
+                return {"error": f"קובץ ה-ESPHome '{file_name}' אינו קיים בתיקיית /config/esphome/."}
+
+            preview = (
+                f"# מחיקת מכשיר ESPHome: {safe_name}\n"
+                f"# קובץ למחיקה: /config/{rel_path}\n"
+                f"# סיבה: {reason}\n"
+                f"# שים לב: ייווצר גיבוי מלא של הקובץ לפני המחיקה ב-/config/.ai_agent_backups/!\n"
+            )
+
+            if not self.require_approval:
+                _create_file_backup(self.hass.config.config_dir, rel_path)
+                os.remove(full_path)
+                for entry in self.hass.config_entries.async_entries("esphome"):
+                    if entry.title.lower() == safe_name.lower():
+                        await self.hass.config_entries.async_remove(entry.entry_id)
+                        break
+                return {"status": "ok", "message": f"מכשיר ESPHome '{safe_name}' הוסר בהצלחה!"}
+
+            action_id = f"act_{uuid.uuid4().hex[:8]}"
+            payload = {
+                "action": "delete",
+                "device_name": safe_name,
+                "file_path": rel_path,
+                "reason": reason,
+            }
+            proposal = {
+                "id": action_id,
+                "type": "manage_esphome_device",
+                "title": f"ESPHome: מחיקת מכשיר {safe_name}",
+                "description": reason,
+                "yaml_preview": preview,
+                "created_at": time.time(),
+                "status": "pending_approval",
+                "payload": payload,
+            }
+            PENDING_ACTIONS[action_id] = proposal
+
+            persistent_notification.async_create(
+                self.hass,
+                f"**סוכן AI מציע למחוק מכשיר ESPHome:** `{safe_name}`\n\n"
+                f"סיבה: {reason}\n\n"
+                f"פתח את חלון הסוכן כדי לאשר או לדחות את המחיקה.",
+                title=f"⚠️ ממתין לאישורך: מחיקת ESPHome {safe_name}",
+                notification_id=f"ai_agent_{action_id}",
+            )
+
+            return {
+                "requires_user_approval": True,
+                "action_id": action_id,
+                "title": f"ESPHome: מחיקת מכשיר {safe_name}",
+                "yaml_preview": preview,
+                "message": f"מחיקת מכשיר ESPHome '{safe_name}' דורשת את אישורך. לחץ על 'אשר' לביצוע.",
+            }
+
+        return {"error": f"פעולה לא מוכרת: {action}. השתמש ב: list, read, create, edit, delete."}
+
+    async def _handle_manage_ha_addon(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Manage Supervisor Add-ons (Apps): list, info, logs, start, stop, restart, edit_options, install, uninstall."""
+        action = args.get("action", "list")
+        slug = str(args.get("slug") or "").strip().lower()
+        options = args.get("options")
+        reason = args.get("reason", "ניהול הרחבה/אפליקציה ב-Home Assistant")
+
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        has_hassio = bool(self.hass.config.components and "hassio" in self.hass.config.components)
+
+        if not token and not has_hassio:
+            return {
+                "error": "המערכת פועלת בסביבת Container / Core ללא תמיכת Supervisor (Hass.io). ניהול Add-ons נתמך במערכות Home Assistant OS או Home Assistant Supervised."
+            }
+
+        session = aiohttp_client.async_get_clientsession(self.hass)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        } if token else {}
+        base_url = "http://supervisor"
+
+        if action == "list":
+            if not token:
+                return {"error": "SUPERVISOR_TOKEN אינו זמין עבור שאילתת רשימת הרחבות."}
+            try:
+                async with session.get(f"{base_url}/addons", headers=headers, timeout=15) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        addons_data = data.get("data", {}).get("addons", [])
+                        summary = []
+                        for a in addons_data:
+                            summary.append({
+                                "name": a.get("name"),
+                                "slug": a.get("slug"),
+                                "version": a.get("version"),
+                                "version_latest": a.get("version_latest"),
+                                "update_available": a.get("update_available", False),
+                                "state": a.get("state"),
+                                "boot": a.get("boot"),
+                                "auto_update": a.get("auto_update"),
+                                "description": a.get("description", "")[:100],
+                            })
+                        return {
+                            "status": "ok",
+                            "count": len(summary),
+                            "addons": summary,
+                        }
+                    err_txt = await resp.text()
+                    return {"error": f"שגיאה משירות ה-Supervisor ({resp.status}): {err_txt}"}
+            except Exception as ex:
+                return {"error": f"תקלה בתקשורת עם Supervisor: {ex}"}
+
+        if not slug:
+            return {"error": "נא לציין slug של ההרחבה (למשל 'core_mosquitto', 'core_samba', 'esphome')."}
+
+        if action == "info":
+            try:
+                async with session.get(f"{base_url}/addons/{slug}/info", headers=headers, timeout=15) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        info_data = data.get("data", {})
+                        return {
+                            "status": "ok",
+                            "name": info_data.get("name"),
+                            "slug": info_data.get("slug"),
+                            "version": info_data.get("version"),
+                            "state": info_data.get("state"),
+                            "boot": info_data.get("boot"),
+                            "options": info_data.get("options", {}),
+                            "schema": info_data.get("schema", {}),
+                            "url": info_data.get("url"),
+                            "webui": info_data.get("webui"),
+                            "ingress": info_data.get("ingress"),
+                        }
+                    err_txt = await resp.text()
+                    return {"error": f"הרחבה '{slug}' לא נמצאה או שגיאת Supervisor ({resp.status}): {err_txt}"}
+            except Exception as ex:
+                return {"error": f"תקלה בשליפת פרטי הרחבה: {ex}"}
+
+        if action == "logs":
+            try:
+                async with session.get(f"{base_url}/addons/{slug}/logs", headers=headers, timeout=20) as resp:
+                    if resp.status == 200:
+                        logs_raw = await resp.text()
+                        log_lines = logs_raw.splitlines()
+                        last_lines = log_lines[-80:] if len(log_lines) > 80 else log_lines
+                        return {
+                            "status": "ok",
+                            "slug": slug,
+                            "total_lines": len(log_lines),
+                            "recent_logs": "\n".join(last_lines),
+                        }
+                    err_txt = await resp.text()
+                    return {"error": f"שגיאה בשליפת לוגים של '{slug}': {err_txt}"}
+            except Exception as ex:
+                return {"error": f"תקלה בשליפת לוגים: {ex}"}
+
+        if action in ("start", "stop", "restart"):
+            try:
+                service_name = f"addon_{action}"
+                if self.hass.services.has_service("hassio", service_name):
+                    await self.hass.services.async_call("hassio", service_name, {"addon": slug}, blocking=True)
+                else:
+                    async with session.post(f"{base_url}/addons/{slug}/{action}", headers=headers, timeout=30) as resp:
+                        if resp.status >= 400:
+                            err_txt = await resp.text()
+                            return {"error": f"פעולת {action} נכשלה ({resp.status}): {err_txt}"}
+                return {"status": "ok", "message": f"ההרחבה '{slug}' הופעלה בפקודת {action} בהצלחה!"}
+            except Exception as ex:
+                return {"error": f"שגיאה בביצוע {action} על '{slug}': {ex}"}
+
+        if action == "edit_options":
+            if not isinstance(options, dict):
+                return {"error": "נא לספק מילון options תקין לעריכת הגדרות ההרחבה."}
+
+            preview_yaml = yaml.safe_dump(options, allow_unicode=True, sort_keys=False)
+            preview = (
+                f"# עריכת הגדרות (Options) עבור הרחבה: {slug}\n"
+                f"# סיבה: {reason}\n\n"
+                f"=== ⚙️ הגדרות חדשות שיוחלו ===\n"
+                f"{preview_yaml}"
+            )
+
+            if not self.require_approval:
+                async with session.post(f"{base_url}/addons/{slug}/options", headers=headers, json={"options": options}, timeout=20) as resp:
+                    if resp.status >= 400:
+                        err_txt = await resp.text()
+                        return {"error": f"עדכון הגדרות נכשל ({resp.status}): {err_txt}"}
+                return {"status": "ok", "message": f"הגדרות ההרחבה '{slug}' עודכנו בהצלחה!"}
+
+            action_id = f"act_{uuid.uuid4().hex[:8]}"
+            proposal = {
+                "id": action_id,
+                "type": "manage_ha_addon",
+                "title": f"Add-on {slug}: עריכת הגדרות קונפיגורציה",
+                "description": reason,
+                "yaml_preview": preview,
+                "created_at": time.time(),
+                "status": "pending_approval",
+                "payload": {"action": "edit_options", "slug": slug, "options": options, "reason": reason},
+            }
+            PENDING_ACTIONS[action_id] = proposal
+
+            persistent_notification.async_create(
+                self.hass,
+                f"**סוכן AI מציע לעדכן הגדרות עבור הרחבה:** `{slug}`\n\n"
+                f"סיבה: {reason}\n\n"
+                f"```yaml\n{preview_yaml}\n```\n\n"
+                f"פתח את חלון הסוכן כדי לאשר או לדחות.",
+                title=f"🤖 ממתין לאישורך: עדכון הגדרות {slug}",
+                notification_id=f"ai_agent_{action_id}",
+            )
+
+            return {
+                "requires_user_approval": True,
+                "action_id": action_id,
+                "title": f"Add-on {slug}: עריכת הגדרות",
+                "yaml_preview": preview,
+                "message": f"הכנתי את עדכון ההגדרות עבור הרחבת '{slug}'. אנא אשר את הפעולה לביצוע.",
+            }
+
+        if action in ("install", "uninstall"):
+            preview = (
+                f"# פעולת Add-on: {action}\n"
+                f"# הרחבה: {slug}\n"
+                f"# סיבה: {reason}\n"
+            )
+
+            if not self.require_approval:
+                async with session.post(f"{base_url}/addons/{slug}/{action}", headers=headers, timeout=60) as resp:
+                    if resp.status >= 400:
+                        err_txt = await resp.text()
+                        return {"error": f"פעולת {action} נכשלה ({resp.status}): {err_txt}"}
+                return {"status": "ok", "message": f"ההרחבה '{slug}' בוצעה בהצלחה בפעולת {action}!"}
+
+            action_id = f"act_{uuid.uuid4().hex[:8]}"
+            proposal = {
+                "id": action_id,
+                "type": "manage_ha_addon",
+                "title": f"Add-on {slug}: {'התקנה' if action == 'install' else 'הסרה'}",
+                "description": reason,
+                "yaml_preview": preview,
+                "created_at": time.time(),
+                "status": "pending_approval",
+                "payload": {"action": action, "slug": slug, "reason": reason},
+            }
+            PENDING_ACTIONS[action_id] = proposal
+
+            persistent_notification.async_create(
+                self.hass,
+                f"**סוכן AI מציע לבצע {action} עבור הרחבה:** `{slug}`\n\n"
+                f"סיבה: {reason}\n\n"
+                f"פתח את חלון הסוכן כדי לאשר או לדחות.",
+                title=f"⚠️ ממתין לאישורך: {action} הרחבה {slug}",
+                notification_id=f"ai_agent_{action_id}",
+            )
+
+            return {
+                "requires_user_approval": True,
+                "action_id": action_id,
+                "title": f"Add-on {slug}: {'התקנה' if action == 'install' else 'הסרה'}",
+                "yaml_preview": preview,
+                "message": f"פעולת {action} עבור '{slug}' דורשת את אישורך. לחץ על 'אשר' לביצוע.",
+            }
+
+        return {"error": f"פעולה לא מוכרת: {action}. השתמש ב: list, info, logs, start, stop, restart, edit_options, install, uninstall."}
+
 
 # --- Safe File & Network Operations (Run inside Executor) ---
 
@@ -1815,6 +2318,76 @@ async def async_resolve_action(hass: HomeAssistant, action_id: str, approved: bo
                 "status": "executed",
                 "message": f"הפעולה '{domain}.{service}' בוצעה בהצלחה במערכת!",
             }
+
+        if action_type == "manage_esphome_device":
+            act = payload.get("action")
+            dev_name = payload.get("device_name", "")
+            file_rel = payload.get("file_path", f"esphome/{dev_name}.yaml")
+            full_path = os.path.abspath(os.path.join(hass.config.config_dir, file_rel))
+
+            if act in ("create", "edit"):
+                content = payload.get("content", "")
+                await hass.async_add_executor_job(_create_file_backup, hass.config.config_dir, file_rel)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                proposal["status"] = "executed"
+                del PENDING_ACTIONS[action_id]
+                return {
+                    "success": True,
+                    "status": "executed",
+                    "message": f"מכשיר ESPHome '{dev_name}' נשמר ועודכן בהצלחה ב-/config/{file_rel}!",
+                }
+
+            if act == "delete":
+                if os.path.exists(full_path):
+                    await hass.async_add_executor_job(_create_file_backup, hass.config.config_dir, file_rel)
+                    os.remove(full_path)
+                for entry in hass.config_entries.async_entries("esphome"):
+                    if entry.title.lower() == dev_name.lower():
+                        await hass.config_entries.async_remove(entry.entry_id)
+                        break
+                proposal["status"] = "executed"
+                del PENDING_ACTIONS[action_id]
+                return {
+                    "success": True,
+                    "status": "executed",
+                    "message": f"מכשיר ESPHome '{dev_name}' הוסר בהצלחה מהמערכת (נוצר גיבוי אוטומטי).",
+                }
+
+        if action_type == "manage_ha_addon":
+            act = payload.get("action")
+            slug = payload.get("slug")
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"} if token else {}
+            session = aiohttp_client.async_get_clientsession(hass)
+
+            if act == "edit_options":
+                opts = payload.get("options", {})
+                async with session.post(f"http://supervisor/addons/{slug}/options", headers=headers, json={"options": opts}, timeout=25) as resp:
+                    if resp.status >= 400:
+                        err_t = await resp.text()
+                        return {"success": False, "error": f"שגיאה בעדכון הגדרות: {err_t}"}
+                proposal["status"] = "executed"
+                del PENDING_ACTIONS[action_id]
+                return {
+                    "success": True,
+                    "status": "executed",
+                    "message": f"הגדרות ההרחבה '{slug}' עודכנו בהצלחה!",
+                }
+
+            if act in ("install", "uninstall"):
+                async with session.post(f"http://supervisor/addons/{slug}/{act}", headers=headers, timeout=60) as resp:
+                    if resp.status >= 400:
+                        err_t = await resp.text()
+                        return {"success": False, "error": f"פעולת {act} נכשלה: {err_t}"}
+                proposal["status"] = "executed"
+                del PENDING_ACTIONS[action_id]
+                return {
+                    "success": True,
+                    "status": "executed",
+                    "message": f"ההרחבה '{slug}' בוצעה בהצלחה בפעולת {act}!",
+                }
 
         return {"success": False, "error": f"סוג פעולה לא מוכר: {action_type}"}
     except Exception as err:

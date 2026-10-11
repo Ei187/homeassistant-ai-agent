@@ -740,6 +740,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         user_lower = user_raw.lower()
 
         # Ultra-Lean Dynamic Tool Injection (Send only 0-2 tools relevant to request)
+        is_esphome = any(k in user_lower for k in ("esphome", "אספהום", "איספהום", "esp32", "esp8266", "d1 mini", "nodemcu"))
+        is_addon = any(k in user_lower for k in ("add-on", "addon", "addons", "הרחב", "תוסף", "אפליקצי", "app", "apps", "supervisor", "סופרוויזר"))
         is_automation = any(k in user_lower for k in ("אוטומצי", "automation", "trigger", "תרחיש", "סצנ"))
         is_config_file = any(k in user_lower for k in ("קובץ", "yaml", "configuration", "config", "ערוך קובץ", "שמור קובץ"))
         is_error_scan = any(k in user_lower for k in ("לוג", "שגיא", "תקל", "log", "error", "סרוק"))
@@ -751,7 +753,24 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         ])
 
         target_max_tokens = 250
-        if is_automation:
+        if is_esphome:
+            # Send ONLY ESPHome tools
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_esphome_device", "read_config_file", "edit_config_file")]
+            full_system_prompt = (
+                "אתה מומחה ESPHome ב-Home Assistant. נהל, הוסף, ערוך, מחק או קרא קובצי תצורה של מכשירי ESPHome "
+                "באמצעות הכלי manage_esphome_device. ענה בעברית ב-Markdown ברור."
+            )
+            target_max_tokens = 500
+        elif is_addon:
+            # Send ONLY Addon tools
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_ha_addon", "scan_system_errors")]
+            full_system_prompt = (
+                "אתה מנהל הרחבות ואפליקציות (Add-ons / Apps ב-Home Assistant OS / Supervised). "
+                "השתמש בכלי manage_ha_addon להצגת רשימה (list), פרטים והגדרות (info), בדיקת לוגים ותיקון (logs), "
+                "הפעלה/עצירה/ריסטרט, עריכת הגדרות (edit_options), התקנה או הסרה. ענה בעברית ב-Markdown."
+            )
+            target_max_tokens = 500
+        elif is_automation:
             # Send ONLY create_automation tool (~60 tokens for tool schema!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "create_automation"]
             entities_text = get_entities_context(hass, max_entities=5, compact=True, query_filter=user_raw)
