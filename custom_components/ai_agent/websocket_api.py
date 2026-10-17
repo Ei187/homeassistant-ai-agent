@@ -363,10 +363,15 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     is_direct_scan_logs = not is_question and any(w in user_text for w in [
         "סרוק לוגים", "סרוק שגיאות", "בדוק שגיאות בלוגים", "בדוק שגיאות", "סרוק תקלות", "סריקת לוגים"
     ])
-    is_direct_notify = not is_question and any(w in user_text for w in [
-        "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
-        "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "שלח לפלאפון"
-    ])
+    has_send_verb = any(w in user_text for w in ["שלח", "תשלח", "הודעה", "התראה", "התראות", "send", "notify"])
+    has_mobile_target = any(w in user_text for w in ["טלפון", "פלאפון", "נייד", "אייפד", "איפד", "טאבלט", "אפליקצי", "phone", "mobile", "ipad", "tablet", "device"])
+    is_direct_notify = not is_question and (
+        (has_send_verb and has_mobile_target)
+        or any(w in user_text for w in [
+            "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
+            "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "שלח לפלאפון"
+        ])
+    )
 
     if is_direct_device_control or is_direct_whats_on or is_direct_scan_logs or is_direct_notify:
         send_status("מבצע פעולה מקומית (0 טוקנים)...")
@@ -468,8 +473,52 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "3. 📝 **עריכת וקריאת קבצים:** קריאה ועריכה של `configuration.yaml`, יצירת קובצי JSON למיזוג (SmartIR), סקריפטים ועוד.\n"
                 "4. 💡 **שליטה במכשירים:** הדלקה וכיבוי אורות, מזגנים, תריסים, מתגים ותרחישים.\n"
                 "5. ⚡ **בניית אוטומציות:** יצירת אוטומציות חכמות והטמעה ישירה במערכת.\n"
-                "6. 🔧 **דיאגנוסטיקה והפעלה מחדש:** סריקת לוגים, בדיקת תקינות הגדרות (check_config), טעינה מחדש והפעלה מחדש של השרת.\n\n"
+                "6. 🔧 **דיאגנוסטיקה והפעלה מחדש:** סריקת לוגים, בדיקת תקינות הגדרות (check_config), טעינה מחדש והפעלה מחדש של השרת.\n"
+                "7. 📱 **שליחת הודעות לפלאפון:** שליחת מתכונים, תמונות, תרשימים והודעות ישירות לטלפון הנייד שלך (`send_mobile_notification`).\n\n"
                 "🛡️ **בטיחות מלאה:** כל פעולה שמשנה הגדרות או שולטת במכשיר מציגה כרטיס אישור `[אשר והטמע במערכת] / [דחה ובטל]`, כך ששום פעולה לא מתבצעת ללא אישורך המפורש!"
+            )
+
+        elif is_question and any(w in user_text for w in [
+            "לשלוח לטלפון", "לשלוח לפלאפון", "לשלוח לנייד", "לשלוח לאייפד", "לשלוח הודעה",
+            "notify לאפליקציה", "לשלוח notify", "הודעות ישירות", "למה אתה לא יכול ישירות",
+            "אתה יכול לשלוח", "תוכל לשלוח"
+        ]):
+            reply = (
+                "**כן, בהחלט! יש לי יכולת מלאה לשלוח הודעות, מתכונים ותרשימים ישירות לפלאפון שלך דרך Home Assistant!** 📱✨\n\n"
+                "אני מחובר ישירות לשירותי ה-Notify של המערכת ומזהה ספציפית את הפלאפון שלך (`אליהו`).\n\n"
+                "כדי שאשלח לך עכשיו הודעה או מתכון, פשוט תגיד לי:\n"
+                "- `שלח לי לפלאפון מתכון לפנקייק`\n"
+                "- `שלח לי לטלפון הודעת בדיקה`\n\n"
+                "ואני אשלח אותה מיד ישירות למכשיר שלך!"
+            )
+
+        elif (has_send_verb and has_mobile_target):
+            # Dispatch mobile notification in Zero-Key mode
+            send_status("מכין ושולח לפלאפון שלך...")
+            session = async_get_clientsession(hass)
+            free_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "אתה סוכן AI חכם של Home Assistant. כתוב תשובה מלאה, מעוצבת, יפה ומפורטת בעברית ב-Markdown "
+                        "לבקשת המשתמש (אם מתכון – כתוב רשימת מצרכים מלאה, כמויות והוראות הכנה מפורטות שלב-אחר-שלב). "
+                        "התשובה תישלח ישירות כהתראה לטלפון הנייד שלו!"
+                    ),
+                },
+                {"role": "user", "content": user_raw},
+            ]
+            content_to_send = await _call_free_cloud_ai(free_messages, session) or user_raw
+            is_ipad = any(w in user_text for w in ["אייפד", "איפד", "טאבלט", "ipad", "tablet"])
+            dev_type = "tablet" if is_ipad else "phone"
+            res_notify = await tool_engine.execute_tool("send_mobile_notification", {
+                "message": content_to_send,
+                "title": "הודעה מסוכן AI 📱",
+                "device_type": dev_type,
+            })
+            reply = (
+                f"{res_notify.get('message', 'ההודעה נשלחה בהצלחה לפלאפון! 📱')}\n\n"
+                f"---\n"
+                f"### 📋 תוכן ההודעה שנשלחה לנייד:\n\n{content_to_send}"
             )
 
         elif is_question and any(w in user_text for w in ["אינטגרצי", "smartir", "github", "גיטהאב"]):
@@ -686,7 +735,9 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 {
                     "role": "system",
                     "content": (
-                        "אתה סוכן AI חכם, מקצועי ומועיל של Home Assistant (עוזר בית חכם מתקדם). "
+                        "אתה סוכן AI חכם, מקצועי, בעל יכולות אוטונומיות מלאות ב-Home Assistant (עוזר בית חכם מתקדם). "
+                        "יש לך גישה ישירה לכלים ולשירותי המערכת (כולל שליחת התראות והודעות ישירות לטלפון של המשתמש בעזרת send_mobile_notification, שליטה במכשירים, ועריכת קבצים). "
+                        "לעולם אל תגיד שאתה 'רק מודל שיח' או שאינך יכול לבצע פעולות ישירות ב-Home Assistant. "
                         "ענה תמיד בעברית רהוטה, ברורה, מדויקת ומעוצבת יפה ב-Markdown. "
                         "עזור למשתמש בכל שאלה, הסבר מושגים, הצע פתרונות, נהל שיחה חופשית והיה שירותי וידידותי.\n\n"
                         f"### מכשירים בבית:\n{compact_ctx}"
@@ -872,12 +923,12 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             # Pure Chat / Knowledge / Question Mode -> ZERO TOOLS! ZERO ENTITIES! (~10 tokens total!)
             active_tools = None
             full_system_prompt = (
-                "אתה סוכן AI מתקדם, אינטליגנטי, מועיל ורחב אופקים. יש לך ידע מלא ועשיר בכל תחום שבעולם (בישול, מתכונים, מדע, היסטוריה, תכנות, שיחה כללית, עצות ורעיונות) לצד מומחיות עליונה ב-Home Assistant.\n"
+                "אתה סוכן AI מתקדם, אינטליגנטי, מועיל ורחב אופקים, ועוזר אישי ראשי אוטונומי ב-Home Assistant.\n"
                 "הנחיות קריטיות:\n"
-                "- ענה תמיד ברצון ובאדיבות על כל שאלה או בקשה, קטנה כגדולה.\n"
-                "- הקפד על עברית תקנית, רהוטה ומדויקת ללא שגיאות כתיב, ללא מילים מומצאות או משובשות.\n"
-                "- השלם תמיד את התשובה והמשפטים במלואם עד סופם ללא קטיעה באמצע.\n"
-                "- לעולם אל תסרב לענות בטענה שזה 'לא בתחום הידע' או שאתה 'מוגבל רק לבית חכם'. אתה עוזר אישי מלא לכל דבר.\n"
+                "- אתה סוכן בעל יכולות ביצוע ישירות ב-Home Assistant (שליטה במכשירים, שליחת הודעות ומתכונים לטלפון עם send_mobile_notification, עריכת קבצים ואוטומציות).\n"
+                "- לעולם אל תגיד שאתה 'רק מודל שיח' או שאין לך יכולת לבצע פעולות ישירות במערכת.\n"
+                "- אם המשתמש שואל על היכולות שלך או אם אתה יכול לשלוח לו התראות לטלפון – ענה בחיוב בהתלהבות, והסבר שאתה מסוגל לשלוח לו ישירות לפלאפון כל הודעה או מתכון שיבקש!\n"
+                "- ענה תמיד ברצון ובאדיבות על כל שאלה, הקפד על עברית תקנית ורהוטה והשלם את כל התשובות במלואן.\n"
                 "- נסח תשובות שלמות, מפורטות ומסודרות בעברית ב-Markdown."
             )
             target_max_tokens = 8192
