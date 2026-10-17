@@ -35,11 +35,11 @@ _LOGGER = logging.getLogger(__name__)
 # Token budgets for providers that use numeric token counts (Anthropic, Gemini)
 THINKING_BUDGET_MAP = {
     THINKING_OFF: 0,
-    THINKING_LOW: 2048,
-    THINKING_MEDIUM: 8192,
-    THINKING_HIGH: 16384,
-    THINKING_XHIGH: 32768,
-    THINKING_MAX: 65536,
+    THINKING_LOW: 1024,
+    THINKING_MEDIUM: 2048,
+    THINKING_HIGH: 4096,
+    THINKING_XHIGH: 8192,
+    THINKING_MAX: -1,  # In Gemini, -1 triggers optimal dynamic thinking without token starvation
 }
 
 
@@ -594,9 +594,9 @@ class AIClient:
             "input": input_items,
             "store": False,
         }
-        effective_max = max_tokens or 4096
+        effective_max = max(max_tokens or 8192, 16384)
         if thinking_level != THINKING_OFF:
-            effective_max = max(effective_max, 8192)
+            effective_max = 32768
         payload["max_output_tokens"] = effective_max
 
         if system_prompt:
@@ -794,21 +794,22 @@ class AIClient:
             "messages": formatted_messages,
         }
 
-        effective_max = max_tokens or 4096
+        effective_max = max(max_tokens or 8192, 16384)
         # Reasoning effort for OpenAI / OpenRouter (omit for Groq and non-reasoning providers)
         if self.provider not in (PROVIDER_GROQ, PROVIDER_CUSTOM) and thinking_level and thinking_level != THINKING_OFF:
             eff = thinking_level.lower()
-            if eff == THINKING_MAX:
+            if eff in (THINKING_MAX, THINKING_XHIGH):
                 eff = THINKING_HIGH
-            if eff in ("low", "medium", "high", "xhigh"):
+            if eff in ("low", "medium", "high"):
                 payload["reasoning_effort"] = eff
-                effective_max = max(effective_max, 8192)
+                effective_max = 32768
 
         if self.provider == PROVIDER_GROQ:
-            groq_cap = min(effective_max, 8192)
-            payload["max_completion_tokens"] = groq_cap
-            # Precise temperature for multilingual Hebrew accuracy (prevents sub-word hallucinations and spelling mistakes)
+            payload["max_completion_tokens"] = min(effective_max, 8192)
             payload["temperature"] = 0.5
+        elif self.provider == PROVIDER_OPENAI:
+            # Modern OpenAI supports max_completion_tokens (required for o1, o3-mini)
+            payload["max_completion_tokens"] = effective_max
         else:
             payload["max_tokens"] = effective_max
 
@@ -1063,18 +1064,25 @@ class AIClient:
                     "content": str(m.get("content") or ""),
                 })
 
-        effective_max = max_tokens or 4096
-        # Extended Thinking for Claude
-        if thinking_level != THINKING_OFF:
-            budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
-            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            effective_max = max(budget + 4096, 8192)
+        is_claude_37 = "3-7" in target_model or "sonnet-3-7" in target_model
+        effective_max = 16384 if is_claude_37 else 8192
+        if max_tokens and max_tokens > effective_max:
+            effective_max = min(max_tokens, 64000 if is_claude_37 else 8192)
 
         payload: Dict[str, Any] = {
             "model": target_model,
             "messages": formatted_messages,
             "max_tokens": effective_max,
         }
+
+        # Extended Thinking for Claude (Anthropic requires budget_tokens < max_tokens and only models that support it)
+        if thinking_level != THINKING_OFF and is_claude_37:
+            raw_budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
+            if raw_budget == -1:
+                raw_budget = 4096
+            budget = min(max(raw_budget, 1024), effective_max - 2048)
+            if budget >= 1024:
+                payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
 
         if system_prompt:
             payload["system"] = system_prompt
@@ -1263,13 +1271,14 @@ class AIClient:
             payload["tools"] = [{"functionDeclarations": func_decls}]
 
         gen_config: Dict[str, Any] = {}
-        effective_max = max_tokens or 4096
+        # Generous output token ceiling so responses are NEVER cut off
+        effective_max = max(max_tokens or 8192, 16384)
         if thinking_level != THINKING_OFF:
             budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
+            # In Gemini, -1 triggers dynamic thinking — model reasons dynamically without token starvation
             gen_config["thinkingConfig"] = {"thinkingBudget": budget}
-            # Crucial: In Gemini API, maxOutputTokens covers both thinking tokens and visible output!
-            effective_max = max(budget + 4096, 8192)
-        gen_config["maxOutputTokens"] = effective_max
+            effective_max = 32768
+        gen_config["maxOutputTokens"] = min(effective_max, 65536)
         payload["generationConfig"] = gen_config
 
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
@@ -1315,6 +1324,8 @@ class AIClient:
                     if candidates and "content" in candidates[0]:
                         parts = candidates[0]["content"].get("parts") or []
                         for p in parts:
+                            if p.get("thought"):
+                                continue
                             t = p.get("text")
                             if t:
                                 accumulated_text.append(t)
@@ -1344,6 +1355,8 @@ class AIClient:
         if candidates and "content" in candidates[0]:
             parts = candidates[0]["content"].get("parts", [])
             for p in parts:
+                if p.get("thought"):
+                    continue
                 if p.get("text"):
                     text += p["text"]
                 if p.get("functionCall"):

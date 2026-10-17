@@ -288,17 +288,17 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     )
 
     history = msg.get("history") or []
-    # Extreme Lean History: keep only the last 2 messages (1 user, 1 assistant) to cut history tokens by 80%
-    trimmed_history = history[-2:] if len(history) > 2 else history
+    # Keep last 6 messages (3 full turns) for rich context without token starvation
+    trimmed_history = history[-6:] if len(history) > 6 else history
     formatted_messages = []
     for h in trimmed_history:
         content = h.get("content") or ""
         # Strip out error notices from previous turns so they don't mislead the LLM
         if str(content).startswith("⚠️") or "שגיאה בתקשורת" in str(content):
             continue
-        # Truncate past turns to max 200 characters to prevent token ballooning
-        if len(str(content)) > 200:
-            content = str(content)[:200] + "..."
+        # Truncate only exceptionally long past turns to 4000 characters
+        if len(str(content)) > 4000:
+            content = str(content)[:4000] + "..."
         clean_h = {
             "role": h.get("role", "user"),
             "content": content,
@@ -752,7 +752,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
         ])
 
-        target_max_tokens = 4096
+        target_max_tokens = 8192
         if is_esphome:
             # Send ONLY ESPHome tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_esphome_device", "read_config_file", "edit_config_file")]
@@ -760,7 +760,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "אתה מומחה ESPHome ו-Home Assistant. נהל, הוסף, ערוך, מחק או קרא קובצי תצורה של מכשירי ESPHome "
                 "באמצעות הכלי manage_esphome_device. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_addon:
             # Send ONLY Addon tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_ha_addon", "scan_system_errors")]
@@ -769,7 +769,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "השתמש בכלי manage_ha_addon להצגת רשימה (list), פרטים והגדרות (info), בדיקת לוגים ותיקון (logs), "
                 "הפעלה/עצירה/ריסטרט, עריכת הגדרות (edit_options), התקנה או הסרה. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_automation:
             # Send ONLY create_automation tool (~60 tokens for tool schema!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "create_automation"]
@@ -778,27 +778,27 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "אתה מומחה אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_config_file:
             # Send ONLY config tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("edit_config_file", "read_config_file")]
             full_system_prompt = "אתה מומחה תצורה ב-Home Assistant. קרא או ערוך קבצים וענה בעברית ב-Markdown ברור ומלא."
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_error_scan:
             # Send ONLY error tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "scan_system_errors"]
             full_system_prompt = "אתה מאבחן מערכת מומחה ב-Home Assistant. סרוק שגיאות, הסבר את הבעיה והצע פתרון מלא בעברית."
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_github_install:
             # Send ONLY GitHub tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("search_github_integrations", "install_custom_component")]
             full_system_prompt = "אתה מנהל רכיבים ב-Home Assistant. חפש או התקן אינטגרציות מ-GitHub וענה בעברית מלאה."
-            target_max_tokens = 4096
+            target_max_tokens = 8192
         elif is_restart:
             # Send ONLY restart tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "restart_or_reload"]
             full_system_prompt = "אתה מנהל שרת Home Assistant. בצע בדיקת תקינות או הפעלה מחדש לבקשת המשתמש וענה בעברית ברורה."
-            target_max_tokens = 2048
+            target_max_tokens = 4096
         elif is_device_ctrl:
             # Send ONLY control_device tool and matched entities (~40 tokens tool + ~15 tokens entities!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "control_device"]
@@ -807,7 +807,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "אתה סוכן בית חכם אינטליגנטי. שלוט במכשירים בעזרת הכלי control_device וענה בעברית ברורה ואדיבה.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 2048
+            target_max_tokens = 4096
         else:
             # Pure Chat / Knowledge / Question Mode -> ZERO TOOLS! ZERO ENTITIES! (~10 tokens total!)
             active_tools = None
@@ -820,7 +820,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "- לעולם אל תסרב לענות בטענה שזה 'לא בתחום הידע' או שאתה 'מוגבל רק לבית חכם'. אתה עוזר אישי מלא לכל דבר.\n"
                 "- נסח תשובות שלמות, מפורטות ומסודרות בעברית ב-Markdown."
             )
-            target_max_tokens = 4096
+            target_max_tokens = 8192
 
         send_status("מעבד נתונים...")
 
@@ -879,6 +879,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 system_prompt=full_system_prompt,
                 override_thinking_level=THINKING_OFF,
                 on_chunk=on_stream_chunk,
+                max_tokens=target_max_tokens,
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 

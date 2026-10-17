@@ -436,6 +436,9 @@ class AIAgentPanel extends HTMLElement {
     };
 
     const tickTypewriter = () => {
+      if (doneReply && doneReply.length > targetText.length) {
+        targetText = doneReply;
+      }
       const remaining = targetText.length - renderedText.length;
       if (remaining > 0) {
         // Natural human reading speed with dynamic acceleration for bursts
@@ -493,11 +496,11 @@ class AIAgentPanel extends HTMLElement {
               if (event.actual_model && event.actual_model !== 'free-engine') {
                 this.setResolvedModel(this.settings.provider, event.actual_model);
               }
-              if (targetText.length === 0 && doneReply) {
-                // If chunks were buffered by network, type entire reply via typewriter
+              // Always guarantee targetText has the full reply from server
+              if (doneReply && doneReply.length > targetText.length) {
                 targetText = doneReply;
-                startTypewriter();
-              } else if (renderedText.length >= targetText.length) {
+              }
+              if (renderedText.length >= targetText.length) {
                 finishMessage(doneReply, doneProposals, doneFallbackNotice);
               } else {
                 startTypewriter();
@@ -549,7 +552,11 @@ class AIAgentPanel extends HTMLElement {
       lastBubble.innerHTML = `<div class="markdown-body"></div>`;
       mdBody = lastBubble.querySelector('.markdown-body');
     }
-    mdBody.innerHTML = this.renderMarkdown(content) + '<span class="streaming-cursor">▌</span>';
+    try {
+      mdBody.innerHTML = this.renderMarkdown(content) + '<span class="streaming-cursor">▌</span>';
+    } catch (_) {
+      mdBody.textContent = content;
+    }
     if (chatScroll) {
       const dist = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
       if (dist < 180) {
@@ -2461,5 +2468,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.3 (Groq 70B Priority, max_completion_tokens & Precision Hebrew Sampling)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.8.4 (Permanent Anti-Truncation, Universal 32K Token Ceiling & Typewriter Full Flush)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
