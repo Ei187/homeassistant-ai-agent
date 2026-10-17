@@ -245,7 +245,7 @@ class AIClient:
 
         # 6. Groq
         if self.provider == PROVIDER_GROQ:
-            fallback = "llama-3.1-8b-instant"
+            fallback = "llama-3.3-70b-versatile"
             try:
                 session = await self._get_session()
                 headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -263,30 +263,28 @@ class AIClient:
                             def _groq_score(m: Dict[str, Any]) -> Tuple[int, int]:
                                 mid = str(m.get("id", "")).lower()
                                 score = 0
-                                # Prioritize models with highest rate limits and zero OTPM choke
-                                if "llama-3.1-8b-instant" in mid:
-                                    score += 150  # 8,000 OTPM, ultra fast, always available on free tier
-                                elif "llama-3.3" in mid:
-                                    score += 100
-                                elif "llama-3.1" in mid:
-                                    score += 90
+                                # Prioritize flagship 70B models with superb Hebrew and reasoning
+                                if "llama-3.3-70b" in mid or "llama-3.3" in mid:
+                                    score += 200
+                                elif "llama-3.1-70b" in mid:
+                                    score += 170
                                 elif "qwen" in mid:
-                                    score += 85
-                                elif "deepseek" in mid:
-                                    score += 80
-                                elif "gpt-oss" in mid:
-                                    score += 75
-                                elif "llama" in mid:
-                                    score += 65
+                                    score += 150
+                                elif "deepseek-r1-distill-llama-70b" in mid:
+                                    score += 140
                                 elif "mixtral" in mid:
+                                    score += 100
+                                elif "llama-3.1-8b" in mid:
                                     score += 50
-                                elif "gemma" in mid:
+                                elif "llama" in mid:
                                     score += 40
+                                elif "gemma" in mid:
+                                    score += 30
 
-                                if "8b" in mid:
-                                    score += 30  # High quota & instant response
-                                elif "70b" in mid:
-                                    score += 15
+                                if "70b" in mid:
+                                    score += 50
+                                elif "32b" in mid:
+                                    score += 30
 
                                 created = int(m.get("created", 0) or 0)
                                 return (score, created)
@@ -338,7 +336,7 @@ class AIClient:
                 PROVIDER_OPENAI: "chatgpt-4o-latest",
                 PROVIDER_DEEPSEEK: "deepseek-chat",
                 PROVIDER_OPENROUTER: "openrouter/auto",
-                PROVIDER_GROQ: "llama-3.1-8b-instant",
+                PROVIDER_GROQ: "llama-3.3-70b-versatile",
                 PROVIDER_CUSTOM: "llama3.3",
             }
             target_model = default_map.get(self.provider, "gpt-4o-mini")
@@ -807,7 +805,10 @@ class AIClient:
                 effective_max = max(effective_max, 8192)
 
         if self.provider == PROVIDER_GROQ:
-            payload["max_tokens"] = min(effective_max, 4096)
+            groq_cap = min(effective_max, 8192)
+            payload["max_completion_tokens"] = groq_cap
+            # Precise temperature for multilingual Hebrew accuracy (prevents sub-word hallucinations and spelling mistakes)
+            payload["temperature"] = 0.5
         else:
             payload["max_tokens"] = effective_max
 
@@ -845,6 +846,8 @@ class AIClient:
                                 continue
                             delta = choices[0].get("delta") or {}
                             text_piece = delta.get("content")
+                            if not text_piece and choices[0].get("message", {}).get("content"):
+                                text_piece = choices[0]["message"]["content"]
                             if text_piece:
                                 accumulated_text.append(text_piece)
                                 if on_chunk:
@@ -928,7 +931,7 @@ class AIClient:
                 # 1. Groq 404 Auto-Recovery
                 if self.provider == PROVIDER_GROQ:
                     self._resolved_model_cache = None
-                    groq_candidates = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "qwen-2.5-32b", "mixtral-8x7b-32768", "gemma2-9b-it"]
+                    groq_candidates = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b", "mixtral-8x7b-32768", "gemma2-9b-it"]
                     try:
                         fresh = await self._discover_latest_model()
                         if fresh and fresh != target_model:

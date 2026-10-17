@@ -2083,7 +2083,7 @@ class AIAgentPanel extends HTMLElement {
                   </span>
                   <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 2px 6px; border-radius: 6px; font-family: monospace;">auto-latest</span>
                 </button>
-                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, gemini-2.5-flash, llama-3.1-8b-instant..." />
+                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, llama-3.3-70b-versatile, gemini-2.5-flash..." />
               </div>
 
               <!-- מלבן 4: רמת חשיבה ומהירות -->
@@ -2461,5 +2461,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.2 (Universal Super-Agent Prompt, Anti-Truncation & Robust UTF-8 Streaming)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.8.3 (Groq 70B Priority, max_completion_tokens & Precision Hebrew Sampling)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
