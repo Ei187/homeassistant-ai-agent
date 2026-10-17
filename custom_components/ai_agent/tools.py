@@ -1923,43 +1923,105 @@ class ToolEngine:
 
             # Match corresponding notify service
             matched_service = None
-            # A. Search entity registry for notify entity belonging to this device
+            all_mobile_services = [s for s in all_notify_services if s.startswith("mobile_app_")]
+            phone_services = [s for s in all_mobile_services if not any(t in s.lower() for t in ("ipad", "tablet", "tab", "איפד", "אייפד", "לוח"))]
+            tablet_services = [s for s in all_mobile_services if any(t in s.lower() for t in ("ipad", "tablet", "tab", "איפד", "אייפד", "לוח"))]
+
+            # A. Search entity registry for entities belonging to this device
             if dev_id and ent_reg:
-                for e in ent_reg.entities.values():
-                    if e.device_id == dev_id and (e.domain == "notify" or e.entity_id.startswith("notify.mobile_app_")):
-                        matched_service = e.entity_id.replace("notify.", "")
+                dev_entries = er.async_entries_for_device(ent_reg, dev_id)
+                # 1. Direct notify domain entity
+                for e in dev_entries:
+                    if e.domain == "notify" or e.entity_id.startswith("notify.mobile_app_"):
+                        cand = e.entity_id.replace("notify.", "")
+                        if cand in all_notify_services or self.hass.states.get(e.entity_id) is not None:
+                            matched_service = cand
+                            break
+                # 2. Extract slug from companion app sensor entities (e.g. sensor.<slug>_battery_level)
+                if not matched_service:
+                    for e in dev_entries:
+                        ent_slug = e.entity_id.split(".", 1)[-1].lower()
+                        for svc in all_mobile_services:
+                            svc_slug = svc.replace("mobile_app_", "").lower()
+                            if svc_slug and (ent_slug.startswith(f"{svc_slug}_") or ent_slug == svc_slug or svc_slug in ent_slug):
+                                matched_service = svc
+                                break
+                        if matched_service:
+                            break
+
+            # B. Match by device model or manufacturer
+            if not matched_service and dev and dev.model:
+                clean_model = re.sub(r"[^a-zA-Z0-9]", "", dev.model.lower())
+                for svc in all_mobile_services:
+                    clean_slug = re.sub(r"[^a-zA-Z0-9]", "", svc.replace("mobile_app_", "").lower())
+                    if clean_model and clean_slug and (clean_model in clean_slug or clean_slug in clean_model):
+                        matched_service = svc
                         break
 
-            # B. Match by device_tracker slug
+            # C. Match by device_tracker slug
             if not matched_service:
-                dt_slug = dt_id.replace("device_tracker.", "").strip()
+                dt_slug = dt_id.replace("device_tracker.", "").strip().lower()
                 candidate = f"mobile_app_{dt_slug}"
                 if candidate in all_notify_services:
                     matched_service = candidate
+                elif any(dt_slug in s.lower() for s in all_mobile_services):
+                    for s in all_mobile_services:
+                        if dt_slug in s.lower():
+                            matched_service = s
+                            break
 
-            # C. Match by clean slug of device name
-            if not matched_service:
+            # D. Match by clean slug of device name
+            if not matched_service and dev_name:
                 clean_name_slug = re.sub(r"[^a-zA-Z0-9_]", "_", dev_name.lower()).strip("_")
-                if f"mobile_app_{clean_name_slug}" in all_notify_services:
+                if clean_name_slug and f"mobile_app_{clean_name_slug}" in all_notify_services:
                     matched_service = f"mobile_app_{clean_name_slug}"
 
-            # D. Partial match among registered mobile_app services
+            # E. Partial match among registered mobile_app services
             if not matched_service:
-                for ns in all_notify_services:
-                    if not ns.startswith("mobile_app_"):
-                        continue
+                for ns in all_mobile_services:
                     ns_short = ns.replace("mobile_app_", "").replace("_", "").lower()
                     comb_short = comb.replace(" ", "").replace("_", "").replace("-", "")
                     if ns_short and (ns_short in comb_short or comb_short in ns_short):
                         matched_service = ns
                         break
 
+            # F. Device type deduction (Phone vs Tablet)
+            if not matched_service:
+                if not is_tablet:
+                    if len(phone_services) == 1:
+                        matched_service = phone_services[0]
+                    elif len(phone_services) > 1:
+                        for ps in phone_services:
+                            if self.user_name and self.user_name.lower() in ps.lower():
+                                matched_service = ps
+                                break
+                        if not matched_service:
+                            matched_service = phone_services[0]
+                else:
+                    if len(tablet_services) == 1:
+                        matched_service = tablet_services[0]
+                    elif len(tablet_services) > 1:
+                        for ts in tablet_services:
+                            if self.user_name and self.user_name.lower() in ts.lower():
+                                matched_service = ts
+                                break
+                        if not matched_service:
+                            matched_service = tablet_services[0]
+
+            # G. Single mobile app fallback
+            if not matched_service and len(all_mobile_services) == 1:
+                matched_service = all_mobile_services[0]
+
+            # Verify matched_service really exists in Home Assistant
+            if matched_service and matched_service not in all_notify_services and self.hass.states.get(f"notify.{matched_service}") is None:
+                matched_service = None
+
             user_devices.append({
                 "name": dev_name,
                 "model": dev_model,
                 "is_tablet": is_tablet,
                 "device_tracker": dt_id,
-                "service": matched_service or f"mobile_app_{dt_id.replace('device_tracker.', '')}",
+                "service": matched_service,
             })
 
         return user_devices
@@ -2001,7 +2063,7 @@ class ToolEngine:
         if data_dict:
             service_data["data"] = data_dict
 
-        delivered_targets: List[str] = []
+        delivered_mobile_targets: List[str] = []
         errors: List[str] = []
 
         # 1. Fetch user's registered personal devices
@@ -2015,8 +2077,9 @@ class ToolEngine:
             # Match against user device friendly name or service
             matched = False
             for d in user_devices:
-                if clean_tgt.lower() in (d["name"].lower(), d["service"].lower(), d["device_tracker"].lower()):
-                    targets_to_call.append(d["service"])
+                svc = d.get("service")
+                if svc and clean_tgt.lower() in (d["name"].lower(), svc.lower(), d["device_tracker"].lower()):
+                    targets_to_call.append(svc)
                     target_device_names.append(d["name"])
                     matched = True
                     break
@@ -2027,29 +2090,32 @@ class ToolEngine:
             # 3. Filter user devices based on requested device_type (phone vs tablet)
             if user_devices:
                 if device_type == "tablet":
-                    selected = [d for d in user_devices if d["is_tablet"]]
+                    selected = [d for d in user_devices if d["is_tablet"] and d.get("service")]
                     if not selected:
-                        selected = user_devices
+                        selected = [d for d in user_devices if d.get("service")]
                 elif device_type == "phone":
-                    selected = [d for d in user_devices if not d["is_tablet"]]
+                    selected = [d for d in user_devices if not d["is_tablet"] and d.get("service")]
                     if not selected:
-                        selected = user_devices
+                        selected = [d for d in user_devices if d.get("service")]
                 else:  # "all"
-                    selected = user_devices
+                    selected = [d for d in user_devices if d.get("service")]
 
                 for d in selected:
-                    targets_to_call.append(d["service"])
-                    target_device_names.append(d["name"])
+                    svc = d.get("service")
+                    if svc and svc not in targets_to_call:
+                        targets_to_call.append(svc)
+                        target_device_names.append(d["name"])
 
             # 4. Fallback if no user-specific devices linked: use general mobile apps with tablet filter
             if not targets_to_call:
                 mobile_apps = [s for s in notify_services if s.startswith("mobile_app_")]
                 if device_type == "phone":
-                    mobile_apps = [s for s in mobile_apps if not any(t in s.lower() for t in ("ipad", "tablet"))]
+                    phone_apps = [s for s in mobile_apps if not any(t in s.lower() for t in ("ipad", "tablet", "tab", "איפד", "אייפד", "לוח"))]
+                    targets_to_call.extend(phone_apps if phone_apps else mobile_apps)
                 elif device_type == "tablet":
-                    mobile_apps = [s for s in mobile_apps if any(t in s.lower() for t in ("ipad", "tablet"))]
-
-                if mobile_apps:
+                    tablet_apps = [s for s in mobile_apps if any(t in s.lower() for t in ("ipad", "tablet", "tab", "איפד", "אייפד", "לוח"))]
+                    targets_to_call.extend(tablet_apps if tablet_apps else mobile_apps)
+                else:
                     targets_to_call.extend(mobile_apps)
 
             # 5. Last resort fallback
@@ -2060,16 +2126,51 @@ class ToolEngine:
                 elif "notify" in notify_services:
                     targets_to_call.append("notify")
 
-        # Call the resolved notify services
-        for svc in targets_to_call:
-            try:
-                await self.hass.services.async_call("notify", svc, service_data, blocking=False)
-                delivered_targets.append(f"notify.{svc}")
-            except Exception as e:
-                _LOGGER.warning("Failed to dispatch notification to notify.%s: %s", svc, e)
-                errors.append(f"notify.{svc}: {str(e)}")
+        # Deduplicate targets
+        unique_targets: List[str] = []
+        for t in targets_to_call:
+            if t and t not in unique_targets:
+                unique_targets.append(t)
+
+        # Call the resolved notify services with verified blocking execution
+        for svc in unique_targets:
+            clean_svc = svc.replace("notify.", "").strip()
+            delivered = False
+            entity_id = f"notify.{clean_svc}"
+
+            # 1. Try modern HA notify.send_message
+            if self.hass.states.get(entity_id) is not None and self.hass.services.has_service("notify", "send_message"):
+                try:
+                    payload = {
+                        "entity_id": entity_id,
+                        "message": message,
+                        "title": title,
+                    }
+                    if data_dict:
+                        payload["data"] = data_dict
+                    await self.hass.services.async_call("notify", "send_message", payload, blocking=True)
+                    delivered_mobile_targets.append(entity_id)
+                    delivered = True
+                    _LOGGER.info("Dispatched notification via notify.send_message to %s", entity_id)
+                except Exception as e:
+                    _LOGGER.warning("notify.send_message failed for %s: %s", entity_id, e)
+
+            # 2. Try direct service call notify.<service>
+            if not delivered:
+                if clean_svc in notify_services:
+                    try:
+                        await self.hass.services.async_call("notify", clean_svc, service_data, blocking=True)
+                        delivered_mobile_targets.append(f"notify.{clean_svc}")
+                        delivered = True
+                        _LOGGER.info("Dispatched notification via notify.%s", clean_svc)
+                    except Exception as e:
+                        _LOGGER.warning("Failed to dispatch to notify.%s: %s", clean_svc, e)
+                        errors.append(f"notify.{clean_svc}: {str(e)}")
+                else:
+                    errors.append(f"notify.{clean_svc}: שירות זה אינו קיים במערכת (לא מופיע תחת שירותי notify)")
 
         # ALWAYS create a persistent notification in Home Assistant UI as record & web view
+        pers_created = False
         try:
             pers_body = f"### {title}\n\n{message}"
             if image_url:
@@ -2083,25 +2184,38 @@ class ToolEngine:
                 title=title,
                 notification_id=f"ai_agent_msg_{int(time.time())}",
             )
-            delivered_targets.append("persistent_notification")
+            pers_created = True
         except Exception as e:
             _LOGGER.warning("Failed to create persistent notification: %s", e)
 
-        target_label = ", ".join(target_device_names) if target_device_names else ", ".join(delivered_targets)
+        target_label = ", ".join(set(target_device_names)) if target_device_names else ", ".join(delivered_mobile_targets)
         user_label = f" של {self.user_name}" if self.user_name else ""
         device_kind = "לאייפד / טאבלט" if device_type == "tablet" else "לפלאפון"
 
-        return {
-            "status": "success" if delivered_targets else "failed",
-            "message": f"ההודעה נשלחה בהצלחה {device_kind}{user_label} ('{target_label}')! 📱",
-            "title": title,
-            "target_user": self.user_name,
-            "device_type": device_type,
-            "targets": target_device_names or delivered_targets,
-            "delivered_to": delivered_targets,
-            "has_image": bool(image_url),
-            "errors": errors if errors else None,
-        }
+        if delivered_mobile_targets:
+            return {
+                "status": "success",
+                "message": f"ההודעה נשלחה בהצלחה {device_kind}{user_label} ('{target_label}')! 📱",
+                "title": title,
+                "target_user": self.user_name,
+                "device_type": device_type,
+                "targets": target_device_names or delivered_mobile_targets,
+                "delivered_to": delivered_mobile_targets,
+                "has_image": bool(image_url),
+                "persistent_notification": pers_created,
+                "errors": errors if errors else None,
+            }
+        else:
+            avail_str = ", ".join(notify_services) if notify_services else "אין שירותי notify רשומים במערכת"
+            err_details = "; ".join(errors) if errors else "לא נמצא שירות notify תואם למכשיר"
+            pers_note = " (נוצרה התראה בלוח ההתראות ב-Home Assistant)" if pers_created else ""
+            return {
+                "status": "failed",
+                "error": f"לא ניתן היה לשלוח את ההתראה לנייד{pers_note}. שגיאה: {err_details}. שירותי ה-Notify הקיימים ב-Home Assistant הם: [{avail_str}]. ודא שאפליקציית Companion מחוברת ושירות ההתראות מופעל בהגדרות הטלפון.",
+                "available_services": notify_services,
+                "errors": errors,
+                "persistent_notification": pers_created,
+            }
 
 
 # --- Safe File & Network Operations (Run inside Executor) ---

@@ -363,9 +363,15 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     is_direct_scan_logs = not is_question and any(w in user_text for w in [
         "סרוק לוגים", "סרוק שגיאות", "בדוק שגיאות בלוגים", "בדוק שגיאות", "סרוק תקלות", "סריקת לוגים"
     ])
+    is_generative = any(w in user_text for w in [
+        "מתכון", "איך", "כיצד", "תרשים", "הסבר", "מדריך", "הוראות", "תמונה",
+        "רשימת", "רשימה", "טיפ", "טיפים", "בדיחה", "סיפור", "סיכום", "תכתוב",
+        "פרט", "המלצה", "המלצות", "recipe", "how", "guide", "explain", "picture",
+        "photo", "image", "instructions"
+    ])
     has_send_verb = any(w in user_text for w in ["שלח", "תשלח", "הודעה", "התראה", "התראות", "send", "notify"])
     has_mobile_target = any(w in user_text for w in ["טלפון", "פלאפון", "נייד", "אייפד", "איפד", "טאבלט", "אפליקצי", "phone", "mobile", "ipad", "tablet", "device"])
-    is_direct_notify = not is_question and (
+    is_direct_notify = not is_question and not is_generative and (
         (has_send_verb and has_mobile_target)
         or any(w in user_text for w in [
             "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
@@ -398,7 +404,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "title": "הודעה מסוכן AI 📱",
                 "device_type": dev_type,
             })
-            reply = res_notif.get("message", "ההודעה נשלחה בהצלחה! 📱")
+            reply = res_notif.get("message") or res_notif.get("error", "ההודעה נשלחה בהצלחה! 📱")
         elif is_direct_device_control:
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
@@ -826,28 +832,49 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         user_lower = user_raw.lower()
 
         # Ultra-Lean Dynamic Tool Injection (Send only 0-2 tools relevant to request)
-        is_esphome = any(k in user_lower for k in ("esphome", "אספהום", "איספהום", "esp32", "esp8266", "d1 mini", "nodemcu"))
-        is_addon = any(k in user_lower for k in ("add-on", "addon", "addons", "הרחב", "תוסף", "אפליקצי", "app", "apps", "supervisor", "סופרוויזר"))
-        is_automation = any(k in user_lower for k in ("אוטומצי", "automation", "trigger", "תרחיש", "סצנ"))
-        is_config_file = any(k in user_lower for k in ("קובץ", "yaml", "configuration", "config", "ערוך קובץ", "שמור קובץ"))
-        is_error_scan = any(k in user_lower for k in ("לוג", "שגיא", "תקל", "log", "error", "סרוק"))
-        is_github_install = any(k in user_lower for k in ("אינטגרצי", "התקן", "תתקין", "github", "גיטהאב", "מאגר"))
-        is_restart = any(k in user_lower for k in ("restart", "reload", "הפעל מחדש", "ריסטרט", "טען מחדש"))
         is_notify = any(k in user_lower for k in (
             "שלח לטלפון", "שלח לנייד", "תשלח לטלפון", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד",
             "שלח הודעה", "תשלח לי הודעה", "התראה לטלפון", "התראה לנייד", "שלח לי לטלפון", "תשלח לי לנייד",
             "notify", "notification", "mobile_app", "send to phone", "לנייד שלי", "לטלפון שלי",
             "שלח לפלאפון", "לפלאפון", "שלח התראה", "תשלח התראה", "שלח לאייפד", "תשלח לאייפד",
             "send to my phone", "send to mobile", "send to ipad", "send notification", "send to device",
-            "send to tablet", "send me", "отправь на телефон", "на телефон", "إرسال إلى الهاتف"
+            "send to tablet", "send me", "отправь на телефон", "на телефон", "إرسال إلى الهاتف",
+            "notify לאפליקציה", "הודעה לאפליקציה", "לשלוח לאפליקציה", "התראה לאפליקציה",
+            "notify לטלפון", "notify לנייד", "notify לפלאפון", "הודעה לפלאפון"
         ))
+        is_esphome = any(k in user_lower for k in ("esphome", "אספהום", "איספהום", "esp32", "esp8266", "d1 mini", "nodemcu"))
+        is_addon = not is_notify and any(k in user_lower for k in ("add-on", "addon", "addons", "הרחב", "תוסף", "supervisor", "סופרוויזר", "חנות תוספים"))
+        is_automation = any(k in user_lower for k in ("אוטומצי", "automation", "trigger", "תרחיש", "סצנ"))
+        is_config_file = any(k in user_lower for k in ("קובץ", "yaml", "configuration", "config", "ערוך קובץ", "שמור קובץ"))
+        is_error_scan = any(k in user_lower for k in ("לוג", "שגיא", "תקל", "log", "error", "סרוק"))
+        is_github_install = any(k in user_lower for k in ("אינטגרצי", "התקן", "תתקין", "github", "גיטהאב", "מאגר"))
+        is_restart = any(k in user_lower for k in ("restart", "reload", "הפעל מחדש", "ריסטרט", "טען מחדש"))
         is_device_ctrl = any(kw in user_lower for kw in [
             "תדליק", "תכבה", "הדלק", "כבה", "פתח", "סגור", "שים", "טמפרטורה", "מיזוג",
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
         ])
 
         target_max_tokens = 8192
-        if is_esphome:
+        if is_notify:
+            # Send ONLY notification tools (+ device control if needed)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("send_mobile_notification", "control_device")]
+            full_system_prompt = (
+                "אתה סוכן AI ראשי של Home Assistant בעל גישה ישירה ויכולת ביצוע מלאה במערכת ההתראות (Mobile App Notify).\n"
+                "הנחיות קריטיות:\n"
+                "- יש לך יכולת מלאה וישירה לשלוח הודעות, התראות, מתכונים, תמונות ותרשימים ישירות למכשיר הנייד של המשתמש בעזרת הכלי send_mobile_notification!\n"
+                "- לעולם אל תגיד 'אני לא יכול לשלוח הודעות ישירות' או 'כמודל שיח אין לי גישה'!\n"
+                "- אם המשתמש שואל אם אתה יכול לשלוח Notify לאפליקציה או הודעה לטלפון – אשר בהתלהבות ובביטחון: 'כן, בהחלט! אני יכול לשלוח ישירות לכל מכשיר שלך כל הודעה, מתכון ותרשים שתבקש!'\n"
+                "- כשהמשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעת בדיקה):\n"
+                "  1. המערכת מזהה ומקשרת אוטומטית את המשתמש הנוכחי שמדבר איתך (למשל 'eli') ואת המכשירים האישיים שלו.\n"
+                "  2. אם המשתמש ביקש לשלוח לפלאפון / לטלפון / לנייד (או 'שלח לי') – השאר device_type='phone' (המערכת תשלח אך ורק לפלאפון האישי שלו כגון 'אליהו', ולא לאייפד/טאבלט!).\n"
+                "  3. אם המשתמש ביקש במפורש לשלוח לאייפד / לטאבלט – הגדר device_type='tablet'.\n"
+                "  4. בשדה message – כתוב ופרט את כל התוכן המלא בצורה עשירה, מקצועית ומפורטת ב-Markdown (אם מתכון – מצרכים, כמויות מדויקות ושלבי הכנה ברורים שלב-אחר-שלב!).\n"
+                "  5. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פיצה איטלקית מושלמת 🍕').\n"
+                "  6. הפעל תמיד את הכלי send_mobile_notification לביצוע השליחה בפועל!\n"
+                "  7. לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה שהתוכן נשלח לפלאפון שלו והצג את המתכון/התוכן המלא גם כאן בצ'אט לנוחיותו."
+            )
+            target_max_tokens = 8192
+        elif is_esphome:
             # Send ONLY ESPHome tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_esphome_device", "read_config_file", "edit_config_file")]
             full_system_prompt = (
@@ -871,23 +898,6 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             full_system_prompt = (
                 "אתה מומחה אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
-            )
-            target_max_tokens = 8192
-        elif is_notify:
-            # Send ONLY notification tools (+ device control if needed)
-            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("send_mobile_notification", "control_device")]
-            full_system_prompt = (
-                "אתה סוכן AI חכם בעל גישה ישירה למערכת ההתראות של Home Assistant. "
-                "המשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעה) ישירות למכשיר שלו. "
-                "כללים קריטיים לשליחת התראה למכשיר הנכון: "
-                "1. המערכת מזהה ומקשרת אוטומטית את המשתמש הנוכחי שמדבר איתך (למשל 'eli') ואת המכשירים האישיים שלו. "
-                "2. אם המשתמש ביקש לשלוח לפלאפון / לטלפון / לנייד (או 'שלח לי') – השאר device_type='phone' "
-                "(המערכת תשלח אך ורק לפלאפון האישי שלו, כגון 'אליהו', ולא למכשירים אחרים כגון אייפד/טאבלט!). "
-                "3. אם המשתמש ביקש במפורש לשלוח לאייפד / לטאבלט – הגדר device_type='tablet'. "
-                "4. בשדה message – פרט את כל התוכן המלא בצורה עשירה, מסודרת ומפורטת ב-Markdown (אם מתכון – מצרכים, כמויות מדויקות ושלבי הכנה שלב-אחר-שלב). "
-                "5. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פנקייק אוורירי 🥞'). "
-                "6. בשדה image_url – אם יש קישור ישיר לתמונה או תרשים, ספק אותו. "
-                "לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה וחמה שהתוכן נשלח לפלאפון/מכשיר שלו והצג את הפרטים גם כאן בצ'אט לנוחיותו."
             )
             target_max_tokens = 8192
         elif is_config_file:

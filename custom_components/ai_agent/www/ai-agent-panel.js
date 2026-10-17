@@ -2472,5 +2472,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.8 (Autonomous Direct Notification Execution & Refusal Prevention)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.8.9 (Verified Mobile Notification Delivery & Generative Routing)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
