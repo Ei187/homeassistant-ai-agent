@@ -786,7 +786,9 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "שלח לטלפון", "שלח לנייד", "תשלח לטלפון", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד",
             "שלח הודעה", "תשלח לי הודעה", "התראה לטלפון", "התראה לנייד", "שלח לי לטלפון", "תשלח לי לנייד",
             "notify", "notification", "mobile_app", "send to phone", "לנייד שלי", "לטלפון שלי",
-            "שלח לפלאפון", "לפלאפון", "שלח התראה", "תשלח התראה"
+            "שלח לפלאפון", "לפלאפון", "שלח התראה", "תשלח התראה", "שלח לאייפד", "תשלח לאייפד",
+            "send to my phone", "send to mobile", "send to ipad", "send notification", "send to device",
+            "send to tablet", "send me", "отправь на телефон", "на телефон", "إرسال إلى الهاتف"
         ))
         is_device_ctrl = any(kw in user_lower for kw in [
             "תדליק", "תכבה", "הדלק", "כבה", "פתח", "סגור", "שים", "טמפרטורה", "מיזוג",

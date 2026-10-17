@@ -1914,8 +1914,12 @@ class ToolEngine:
             if not dev_name:
                 dev_name = dt_id.replace("device_tracker.", "")
 
-            comb = f"{dev_name} {dev_model} {dt_id}".lower()
-            is_tablet = any(k in comb for k in ("ipad", "tablet", "אייפד", "איפד", "טאבלט", "tab"))
+            mfg = (dev.manufacturer or "") if dev else ""
+            comb = f"{dev_name} {dev_model} {mfg} {dt_id}".lower()
+            is_tablet = any(k in comb for k in (
+                "ipad", "tablet", "tablette", "tableta", "טאבלט", "אייפד", "איפד", "לוח",
+                "планшет", "айпад", "تابلت", "ايباد", "galaxy tab", "sm-t", "sm-x", "lenovo tab", "mediapad"
+            ))
 
             # Match corresponding notify service
             matched_service = None
