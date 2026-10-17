@@ -447,16 +447,56 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_mobile_notification",
+            "description": "שולח הודעה, מתכון, קישור, תמונה, תרשים או התראה ישירות לטלפון הנייד של המשתמש דרך Home Assistant (אפליקציית Companion, טלגרם או persistent notification).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "תוכן ההודעה המלאה (מתכון מפורט, הוראות, שלבים, טקסט וכו')",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "כותרת קצרה וקולעת להודעה (למשל: 'מתכון: עוגת שוקולד עסיסית 🎂')",
+                    },
+                    "image_url": {
+                        "type": "string",
+                        "description": "קישור URL ישיר לתמונה, צילום או תרשים אופציונלי שיוצג בהתראה בנייד",
+                    },
+                    "click_url": {
+                        "type": "string",
+                        "description": "קישור אופציונלי שייפתח בלחיצה על ההתראה בנייד",
+                    },
+                    "target_device": {
+                        "type": "string",
+                        "description": "שם שירות ההתראות (למשל 'notify.mobile_app_my_phone'). אם לא מצוין, יישלח אוטומטית לכל הטלפונים המחוברים.",
+                    },
+                },
+                "required": ["message"],
+            },
+        },
+    },
 ]
 
 
 class ToolEngine:
     """Execution engine with Strict Human-in-the-Loop protection and autonomous system control."""
 
-    def __init__(self, hass: HomeAssistant, require_approval: bool = True, notify_mobile: bool = True) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        require_approval: bool = True,
+        notify_mobile: bool = True,
+        mobile_notify_service: str = "notify.notify",
+    ) -> None:
         self.hass = hass
         self.require_approval = require_approval
         self.notify_mobile = notify_mobile
+        self.mobile_notify_service = mobile_notify_service
 
     async def execute_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch tool call safely."""
@@ -501,6 +541,8 @@ class ToolEngine:
                 return await self._handle_manage_esphome_device(args)
             if name == "manage_ha_addon":
                 return await self._handle_manage_ha_addon(args)
+            if name == "send_mobile_notification":
+                return await self._handle_send_mobile_notification(args)
             return {"error": f"Unknown tool name: {name}"}
         except Exception as err:
             _LOGGER.exception("Tool execution error in %s: %s", name, err)
@@ -1812,6 +1854,103 @@ class ToolEngine:
             }
 
         return {"error": f"פעולה לא מוכרת: {action}. השתמש ב: list, info, logs, start, stop, restart, edit_options, install, uninstall."}
+
+    async def _handle_send_mobile_notification(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Send rich notification (text, recipe, diagram, image) to mobile devices or persistent notification."""
+        message = (args.get("message") or "").strip()
+        if not message:
+            return {"error": "לא סופק תוכן להודעה."}
+
+        title = (args.get("title") or "🤖 הודעה מסוכן AI").strip()
+        image_url = args.get("image_url")
+        click_url = args.get("click_url")
+        target_device = args.get("target_device")
+
+        # Discover all available notify services in Home Assistant
+        all_services = self.hass.services.async_services()
+        notify_services = list(all_services.get("notify", {}).keys())
+
+        # Build data payload for rich mobile notifications (Android & iOS Companion App compatible)
+        service_data: Dict[str, Any] = {
+            "title": title,
+            "message": message,
+        }
+
+        data_dict: Dict[str, Any] = {}
+        if image_url:
+            data_dict["image"] = str(image_url).strip()  # Android & Web
+            data_dict["attachment"] = {                  # iOS Companion App
+                "url": str(image_url).strip(),
+                "content-type": "image/jpeg" if any(ext in str(image_url).lower() for ext in (".jpg", ".jpeg")) else "image/png",
+                "hide-thumbnail": False,
+            }
+        if click_url:
+            data_dict["clickAction"] = str(click_url).strip()  # Android
+            data_dict["url"] = str(click_url).strip()          # iOS
+
+        if data_dict:
+            service_data["data"] = data_dict
+
+        delivered_targets: List[str] = []
+        errors: List[str] = []
+
+        # Determine target services
+        targets_to_call: List[str] = []
+        if target_device:
+            clean_svc = str(target_device).replace("notify.", "").strip()
+            targets_to_call.append(clean_svc)
+        else:
+            # 1. Registered companion mobile apps (mobile_app_*)
+            mobile_apps = [s for s in notify_services if s.startswith("mobile_app_")]
+            if mobile_apps:
+                targets_to_call.extend(mobile_apps)
+
+            # 2. Configured service if set and available
+            configured_svc = (self.mobile_notify_service or "").replace("notify.", "").strip()
+            if configured_svc and configured_svc in notify_services and configured_svc not in targets_to_call:
+                targets_to_call.append(configured_svc)
+
+            # 3. Fallback to telegram, html5, or general notify if no mobile apps registered
+            if not targets_to_call:
+                for alt in ("telegram", "html5", "notify"):
+                    if alt in notify_services:
+                        targets_to_call.append(alt)
+
+        # Call the resolved notify services
+        for svc in targets_to_call:
+            try:
+                await self.hass.services.async_call("notify", svc, service_data, blocking=False)
+                delivered_targets.append(f"notify.{svc}")
+            except Exception as e:
+                _LOGGER.warning("Failed to dispatch notification to notify.%s: %s", svc, e)
+                errors.append(f"notify.{svc}: {str(e)}")
+
+        # ALWAYS create a persistent notification in Home Assistant UI as record & web view
+        try:
+            pers_body = f"### {title}\n\n{message}"
+            if image_url:
+                pers_body += f"\n\n![תמונה]({image_url})"
+            if click_url:
+                pers_body += f"\n\n[🔗 פתח קישור]({click_url})"
+
+            persistent_notification.async_create(
+                self.hass,
+                pers_body,
+                title=title,
+                notification_id=f"ai_agent_msg_{int(time.time())}",
+            )
+            delivered_targets.append("persistent_notification")
+        except Exception as e:
+            _LOGGER.warning("Failed to create persistent notification: %s", e)
+
+        return {
+            "status": "success" if delivered_targets else "failed",
+            "message": f"ההודעה נשלחה בהצלחה ({', '.join(delivered_targets)})! 📱",
+            "title": title,
+            "delivered_to": delivered_targets,
+            "has_image": bool(image_url),
+            "errors": errors if errors else None,
+        }
 
 
 # --- Safe File & Network Operations (Run inside Executor) ---

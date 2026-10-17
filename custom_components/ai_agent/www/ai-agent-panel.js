@@ -61,6 +61,8 @@ class AIAgentPanel extends HTMLElement {
       model: 'auto-latest',
       thinking_level: 'high',
       require_approval: true,
+      notify_mobile: true,
+      mobile_notify_service: 'notify.notify',
       api_key: '',
       api_keys: {},
       base_url: 'https://api.openai.com/v1',
@@ -307,6 +309,8 @@ class AIAgentPanel extends HTMLElement {
       api_keys: this.settings.api_keys || {},
       base_url: this.settings.base_url || '',
       require_approval: this.settings.require_approval !== false,
+      notify_mobile: this.settings.notify_mobile !== false,
+      mobile_notify_service: this.settings.mobile_notify_service || 'notify.notify',
     };
     try {
       const res = await this._hass.callWS(payload);
@@ -2468,5 +2472,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.4 (Permanent Anti-Truncation, Universal 32K Token Ceiling & Typewriter Full Flush)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.8.5 (Autonomous Mobile Notifications: Recipes, Diagrams, Images & Alerts)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

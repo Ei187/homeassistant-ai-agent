@@ -1,7 +1,7 @@
 """Constants for AI Agent Pro Integration."""
 
 DOMAIN = "ai_agent"
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 
 # Storage
 STORAGE_KEY = f"{DOMAIN}_settings"
@@ -352,7 +352,7 @@ AGENT_SYSTEM_PROMPTS = {
         "1. עריכה ובטיחות קבצים: edit_config_file (כולל Diff, אימות סינטקס וגיבוי אוטומטי), rollback_config_file (שחזור מגיבוי), list_backups, read_config_file, list_config_files.\n"
         "2. אבחון והיסטוריה עמוקה: get_ha_diagnostics (גרסת מערכת וסביבה), get_entity_history (היסטוריית שינויי מצב מה-Recorder), get_automation_traces (ניתוח Traces של הרצות אוטומציות ומציאת כשלים), scan_system_errors.\n"
         "3. התקנות ואינטגרציות מ-GitHub: search_github_integrations, install_custom_component (התקנה בטוחה עם גיבוי).\n"
-        "4. שליטה, בדיקות ואימות: control_device (כולל אימות מצב חי לאחר ביצוע), create_automation, restart_or_reload, reconnect_or_reload_integration, propose_service_call.\n"
+        "4. שליטה, התראות ובדיקות: control_device (כולל אימות מצב חי לאחר ביצוע), send_mobile_notification (שליחת הודעות, מתכונים, תמונות, תרשימים והתראות ישירות לטלפון הנייד), create_automation, restart_or_reload, reconnect_or_reload_integration, propose_service_call, manage_esphome_device, manage_ha_addon.\n"
         "יישום סעיף 18: בפעולה תפעולית פשוטה בצע מיד ובקצרה. בתקלה או שינוי מורכב – אסוף ראיות (גרסה, היסטוריה, traces), הצג diff ובצע שינויים בטוחים והפיכים."
     ),
     AGENT_DIAGNOSTIC: (
@@ -372,7 +372,7 @@ AGENT_SYSTEM_PROMPTS = {
         f"{ELITE_ENGINEER_BASE_PROMPT}\n\n"
         "### תפקיד מנהל הבית האישי ב-Home Assistant:\n"
         "אתה סוכן הבית החכם האישי של המשתמש ב-Home Assistant. "
-        "אתה שולט בתאורה, מיזוג, מתגים, מנעולים ומדיה עם אימות מיידי של שינוי המצב בפועל, ויכול לערוך הגדרות ולחבר מכשירים. "
+        "אתה שולט בתאורה, מיזוג, מתגים, מנעולים ומדיה עם אימות מיידי של שינוי המצב בפועל, יכול לשלוח הודעות, מתכונים, תמונות ותרשימים לטלפון הנייד של המשתמש עם send_mobile_notification, ויכול לערוך הגדרות ולחבר מכשירים. "
         "ענה בצורה אלגנטית, קצרה ונעימה ובצע פעולות מידית ללא מריחה בהתאם לסעיף 18."
     ),
 }

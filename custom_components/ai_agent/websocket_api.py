@@ -285,6 +285,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     tool_engine = ToolEngine(
         hass,
         require_approval=settings.get(CONF_REQUIRE_APPROVAL, True),
+        notify_mobile=settings.get(CONF_NOTIFY_MOBILE, True),
+        mobile_notify_service=settings.get(CONF_MOBILE_NOTIFY_SERVICE, "notify.notify"),
     )
 
     history = msg.get("history") or []
@@ -355,11 +357,30 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     is_direct_scan_logs = not is_question and any(w in user_text for w in [
         "סרוק לוגים", "סרוק שגיאות", "בדוק שגיאות בלוגים", "בדוק שגיאות", "סרוק תקלות", "סריקת לוגים"
     ])
+    is_direct_notify = not is_question and any(w in user_text for w in [
+        "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
+        "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "שלח לפלאפון"
+    ])
 
-    if is_direct_device_control or is_direct_whats_on or is_direct_scan_logs:
+    if is_direct_device_control or is_direct_whats_on or is_direct_scan_logs or is_direct_notify:
         send_status("מבצע פעולה מקומית (0 טוקנים)...")
         await asyncio.sleep(0.02)
-        if is_direct_device_control:
+        if is_direct_notify:
+            clean_msg = user_raw
+            for stop in [
+                "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
+                "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "שלח לפלאפון",
+                "שלח לי לטלפון", "תשלח לי לטלפון", "שלח לי לנייד", "תשלח לי לנייד",
+                "שלח", "תשלח"
+            ]:
+                clean_msg = clean_msg.replace(stop, "")
+            clean_msg = clean_msg.strip(" :,-?!")
+            res_notif = await tool_engine.execute_tool("send_mobile_notification", {
+                "message": clean_msg or user_raw,
+                "title": "הודעה מסוכן AI 📱",
+            })
+            reply = res_notif.get("message", "ההודעה נשלחה בהצלחה לטלפון! 📱")
+        elif is_direct_device_control:
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
             ctrl_res = await tool_engine.execute_tool("control_device", {
@@ -747,6 +768,12 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         is_error_scan = any(k in user_lower for k in ("לוג", "שגיא", "תקל", "log", "error", "סרוק"))
         is_github_install = any(k in user_lower for k in ("אינטגרצי", "התקן", "תתקין", "github", "גיטהאב", "מאגר"))
         is_restart = any(k in user_lower for k in ("restart", "reload", "הפעל מחדש", "ריסטרט", "טען מחדש"))
+        is_notify = any(k in user_lower for k in (
+            "שלח לטלפון", "שלח לנייד", "תשלח לטלפון", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד",
+            "שלח הודעה", "תשלח לי הודעה", "התראה לטלפון", "התראה לנייד", "שלח לי לטלפון", "תשלח לי לנייד",
+            "notify", "notification", "mobile_app", "send to phone", "לנייד שלי", "לטלפון שלי",
+            "שלח לפלאפון", "לפלאפון", "שלח התראה", "תשלח התראה"
+        ))
         is_device_ctrl = any(kw in user_lower for kw in [
             "תדליק", "תכבה", "הדלק", "כבה", "פתח", "סגור", "שים", "טמפרטורה", "מיזוג",
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
@@ -777,6 +804,19 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             full_system_prompt = (
                 "אתה מומחה אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
+            )
+            target_max_tokens = 8192
+        elif is_notify:
+            # Send ONLY notification tools (+ device control if needed)
+            active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("send_mobile_notification", "control_device")]
+            full_system_prompt = (
+                "אתה סוכן AI חכם בעל גישה ישירה למערכת ההתראות של Home Assistant לשליחת תוכן לטלפון הנייד של המשתמש. "
+                "המשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעה) ישירות לנייד שלו. "
+                "השתמש בכלי send_mobile_notification: "
+                "1. בשדה message – פרט את כל התוכן המלא בצורה עשירה, מסודרת ומפורטת ב-Markdown (אם מתכון – רשימת מצרכים מדויקת, כמויות ושלבי הכנה שלב-אחר-שלב). "
+                "2. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פנקייק אוורירי 🥞'). "
+                "3. בשדה image_url – אם יש קישור ישיר לתמונה או תרשים, ספק אותו. "
+                "לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה ושמחה שהתוכן נשלח לנייד והצג את הפרטים גם כאן בצ'אט לנוחיותו."
             )
             target_max_tokens = 8192
         elif is_config_file:
