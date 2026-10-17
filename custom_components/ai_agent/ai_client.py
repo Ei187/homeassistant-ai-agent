@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import re
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 import aiohttp
 
 from .const import (
@@ -508,6 +509,26 @@ class AIClient:
         res["actual_model"] = target_model
         return res
 
+    async def _iter_sse_lines(self, resp: aiohttp.ClientResponse) -> AsyncGenerator[str, None]:
+        """Robustly parse Server-Sent Events (SSE) stream lines with incremental UTF-8 decoding.
+
+        Buffers multi-byte sequences across chunk boundaries so Hebrew characters are never corrupted,
+        and ensures complete JSON lines are yielded.
+        """
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        buffer = ""
+        async for raw_chunk in resp.content.iter_any():
+            if not raw_chunk:
+                continue
+            buffer += decoder.decode(raw_chunk, final=False)
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    yield line
+        if buffer.strip():
+            yield buffer.strip()
+
     async def _call_openai_responses(
         self,
         messages: List[Dict[str, Any]],
@@ -575,8 +596,11 @@ class AIClient:
             "input": input_items,
             "store": False,
         }
-        if max_tokens:
-            payload["max_output_tokens"] = max_tokens
+        effective_max = max_tokens or 4096
+        if thinking_level != THINKING_OFF:
+            effective_max = max(effective_max, 8192)
+        payload["max_output_tokens"] = effective_max
+
         if system_prompt:
             payload["instructions"] = system_prompt
 
@@ -622,9 +646,8 @@ class AIClient:
                         accumulated_parts: List[str] = []
                         tool_calls_dict: Dict[str, Dict[str, Any]] = {}
                         current_call_id: Optional[str] = None
-                        async for raw_line in resp.content:
-                            line = raw_line.decode("utf-8", errors="replace").strip()
-                            if not line or not line.startswith("data:"):
+                        async for line in self._iter_sse_lines(resp):
+                            if not line.startswith("data:"):
                                 continue
                             data_str = line[5:].strip()
                             if data_str == "[DONE]":
@@ -773,11 +796,7 @@ class AIClient:
             "messages": formatted_messages,
         }
 
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
-        elif self.provider == PROVIDER_GROQ:
-            payload["max_tokens"] = 600
-
+        effective_max = max_tokens or 4096
         # Reasoning effort for OpenAI / OpenRouter (omit for Groq and non-reasoning providers)
         if self.provider not in (PROVIDER_GROQ, PROVIDER_CUSTOM) and thinking_level and thinking_level != THINKING_OFF:
             eff = thinking_level.lower()
@@ -785,6 +804,12 @@ class AIClient:
                 eff = THINKING_HIGH
             if eff in ("low", "medium", "high", "xhigh"):
                 payload["reasoning_effort"] = eff
+                effective_max = max(effective_max, 8192)
+
+        if self.provider == PROVIDER_GROQ:
+            payload["max_tokens"] = min(effective_max, 4096)
+        else:
+            payload["max_tokens"] = effective_max
 
         if tools:
             payload["tools"] = tools
@@ -805,9 +830,8 @@ class AIClient:
                     if payload.get("stream"):
                         accumulated_text: List[str] = []
                         tool_calls_dict: Dict[int, Dict[str, Any]] = {}
-                        async for raw_line in resp.content:
-                            line = raw_line.decode("utf-8", errors="replace").strip()
-                            if not line or not line.startswith("data:"):
+                        async for line in self._iter_sse_lines(resp):
+                            if not line.startswith("data:"):
                                 continue
                             data_str = line[5:].strip()
                             if data_str == "[DONE]":
@@ -1036,20 +1060,21 @@ class AIClient:
                     "content": str(m.get("content") or ""),
                 })
 
-        payload: Dict[str, Any] = {
-            "model": target_model,
-            "messages": formatted_messages,
-            "max_tokens": max_tokens or 1024,
-        }
-
-        if system_prompt:
-            payload["system"] = system_prompt
-
+        effective_max = max_tokens or 4096
         # Extended Thinking for Claude
         if thinking_level != THINKING_OFF:
             budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
             payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            payload["max_tokens"] = max(budget + 2048, 4096)
+            effective_max = max(budget + 4096, 8192)
+
+        payload: Dict[str, Any] = {
+            "model": target_model,
+            "messages": formatted_messages,
+            "max_tokens": effective_max,
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
 
         if tools:
             anthropic_tools = []
@@ -1100,9 +1125,8 @@ class AIClient:
             if payload.get("stream"):
                 accumulated_text: List[str] = []
                 tool_calls_dict: Dict[int, Dict[str, Any]] = {}
-                async for raw_line in resp.content:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or not line.startswith("data:"):
+                async for line in self._iter_sse_lines(resp):
+                    if not line.startswith("data:"):
                         continue
                     data_str = line[5:].strip()
                     try:
@@ -1236,13 +1260,14 @@ class AIClient:
             payload["tools"] = [{"functionDeclarations": func_decls}]
 
         gen_config: Dict[str, Any] = {}
-        if max_tokens:
-            gen_config["maxOutputTokens"] = max_tokens
+        effective_max = max_tokens or 4096
         if thinking_level != THINKING_OFF:
             budget = THINKING_BUDGET_MAP.get(thinking_level, 2048)
             gen_config["thinkingConfig"] = {"thinkingBudget": budget}
-        if gen_config:
-            payload["generationConfig"] = gen_config
+            # Crucial: In Gemini API, maxOutputTokens covers both thinking tokens and visible output!
+            effective_max = max(budget + 4096, 8192)
+        gen_config["maxOutputTokens"] = effective_max
+        payload["generationConfig"] = gen_config
 
         async with session.post(url, headers=headers, json=payload, timeout=90) as resp:
             if resp.status >= 400:
@@ -1275,9 +1300,8 @@ class AIClient:
             if on_chunk:
                 accumulated_text: List[str] = []
                 tool_calls: List[Dict[str, Any]] = []
-                async for raw_line in resp.content:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or not line.startswith("data:"):
+                async for line in self._iter_sse_lines(resp):
+                    if not line.startswith("data:"):
                         continue
                     data_str = line[5:].strip()
                     try:

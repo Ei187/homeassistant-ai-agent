@@ -752,67 +752,73 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
         ])
 
-        target_max_tokens = 250
+        target_max_tokens = 4096
         if is_esphome:
             # Send ONLY ESPHome tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_esphome_device", "read_config_file", "edit_config_file")]
             full_system_prompt = (
-                "אתה מומחה ESPHome ב-Home Assistant. נהל, הוסף, ערוך, מחק או קרא קובצי תצורה של מכשירי ESPHome "
-                "באמצעות הכלי manage_esphome_device. ענה בעברית ב-Markdown ברור."
+                "אתה מומחה ESPHome ו-Home Assistant. נהל, הוסף, ערוך, מחק או קרא קובצי תצורה של מכשירי ESPHome "
+                "באמצעות הכלי manage_esphome_device. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 500
+            target_max_tokens = 4096
         elif is_addon:
             # Send ONLY Addon tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_ha_addon", "scan_system_errors")]
             full_system_prompt = (
                 "אתה מנהל הרחבות ואפליקציות (Add-ons / Apps ב-Home Assistant OS / Supervised). "
                 "השתמש בכלי manage_ha_addon להצגת רשימה (list), פרטים והגדרות (info), בדיקת לוגים ותיקון (logs), "
-                "הפעלה/עצירה/ריסטרט, עריכת הגדרות (edit_options), התקנה או הסרה. ענה בעברית ב-Markdown."
+                "הפעלה/עצירה/ריסטרט, עריכת הגדרות (edit_options), התקנה או הסרה. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 500
+            target_max_tokens = 4096
         elif is_automation:
             # Send ONLY create_automation tool (~60 tokens for tool schema!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "create_automation"]
             entities_text = get_entities_context(hass, max_entities=5, compact=True, query_filter=user_raw)
             full_system_prompt = (
-                "אתה סוכן אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
+                "אתה מומחה אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 450
+            target_max_tokens = 4096
         elif is_config_file:
             # Send ONLY config tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("edit_config_file", "read_config_file")]
-            full_system_prompt = "אתה מומחה תצורה ב-Home Assistant. קרא או ערוך קבצים וענה בעברית ב-Markdown."
-            target_max_tokens = 400
+            full_system_prompt = "אתה מומחה תצורה ב-Home Assistant. קרא או ערוך קבצים וענה בעברית ב-Markdown ברור ומלא."
+            target_max_tokens = 4096
         elif is_error_scan:
             # Send ONLY error tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "scan_system_errors"]
-            full_system_prompt = "אתה מאבחן מערכת ב-Home Assistant. סרוק שגיאות וסכם אותן בעברית."
-            target_max_tokens = 250
+            full_system_prompt = "אתה מאבחן מערכת מומחה ב-Home Assistant. סרוק שגיאות, הסבר את הבעיה והצע פתרון מלא בעברית."
+            target_max_tokens = 4096
         elif is_github_install:
             # Send ONLY GitHub tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("search_github_integrations", "install_custom_component")]
-            full_system_prompt = "אתה מנהל רכיבים ב-Home Assistant. חפש או התקן אינטגרציות מ-GitHub."
-            target_max_tokens = 250
+            full_system_prompt = "אתה מנהל רכיבים ב-Home Assistant. חפש או התקן אינטגרציות מ-GitHub וענה בעברית מלאה."
+            target_max_tokens = 4096
         elif is_restart:
             # Send ONLY restart tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "restart_or_reload"]
-            full_system_prompt = "אתה מנהל שרת Home Assistant. בצע בדיקת תקינות או הפעלה מחדש לבקשת המשתמש."
-            target_max_tokens = 150
+            full_system_prompt = "אתה מנהל שרת Home Assistant. בצע בדיקת תקינות או הפעלה מחדש לבקשת המשתמש וענה בעברית ברורה."
+            target_max_tokens = 2048
         elif is_device_ctrl:
             # Send ONLY control_device tool and matched entities (~40 tokens tool + ~15 tokens entities!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "control_device"]
             entities_text = get_entities_context(hass, max_entities=5, compact=True, query_filter=user_raw)
             full_system_prompt = (
-                "אתה סוכן בית חכם. שלוט במכשירים בעזרת הכלי control_device וענה במשפט קצר בעברית.\n"
+                "אתה סוכן בית חכם אינטליגנטי. שלוט במכשירים בעזרת הכלי control_device וענה בעברית ברורה ואדיבה.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 120
+            target_max_tokens = 2048
         else:
             # Pure Chat / Knowledge / Question Mode -> ZERO TOOLS! ZERO ENTITIES! (~10 tokens total!)
             active_tools = None
-            full_system_prompt = "אתה סוכן AI אינטליגנטי ל-Home Assistant. ענה בצורה בהירה, תמציתית ומדויקת בעברית ב-Markdown."
-            target_max_tokens = 300
+            full_system_prompt = (
+                "אתה סוכן AI מתקדם, אינטליגנטי, מועיל ורחב אופקים. יש לך ידע מלא ועשיר בכל תחום שבעולם (בישול, מתכונים, מדע, היסטוריה, תכנות, שיחה כללית, עצות ורעיונות) לצד מומחיות עליונה ב-Home Assistant.\n"
+                "הנחיות חשובות:\n"
+                "- ענה תמיד ברצון ובאדיבות על כל שאלה או בקשה, קטנה כגדולה.\n"
+                "- לעולם אל תסרב לענות בטענה שזה 'לא בתחום הידע' או שאתה 'מוגבל רק לבית חכם'. אתה עוזר אישי מלא לכל דבר.\n"
+                "- נסח תשובות שלמות, מפורטות ומסודרות בעברית רהוטה ב-Markdown, בלי לקטוע הסברים ובלי למהר לקצר כשמבקשים פירוט."
+            )
+            target_max_tokens = 4096
 
         send_status("מעבד נתונים...")
 
