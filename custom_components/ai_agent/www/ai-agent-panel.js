@@ -2472,5 +2472,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.5 (Autonomous Mobile Notifications: Recipes, Diagrams, Images & Alerts)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.8.6 (User-Targeted Mobile Dispatch: Personal Phone vs Tablet Isolation)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

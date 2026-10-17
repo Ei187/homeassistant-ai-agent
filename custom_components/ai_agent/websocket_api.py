@@ -282,11 +282,17 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
 
     agent_role = settings.get(CONF_AGENT_ROLE, "omni")
     base_prompt = AGENT_SYSTEM_PROMPTS.get(agent_role, AGENT_SYSTEM_PROMPTS["omni"])
+    current_user = getattr(connection, "user", None)
+    user_id = current_user.id if current_user else None
+    user_name = current_user.name if current_user else None
+
     tool_engine = ToolEngine(
         hass,
         require_approval=settings.get(CONF_REQUIRE_APPROVAL, True),
         notify_mobile=settings.get(CONF_NOTIFY_MOBILE, True),
         mobile_notify_service=settings.get(CONF_MOBILE_NOTIFY_SERVICE, "notify.notify"),
+        user_id=user_id,
+        user_name=user_name,
     )
 
     history = msg.get("history") or []
@@ -369,17 +375,25 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             clean_msg = user_raw
             for stop in [
                 "שלח הודעה לטלפון", "תשלח הודעה לטלפון", "שלח לטלפון", "תשלח לטלפון",
-                "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "שלח לפלאפון",
+                "שלח הודעה לפלאפון", "תשלח הודעה לפלאפון", "שלח לפלאפון", "תשלח לפלאפון",
+                "שלח לנייד", "תשלח לנייד", "הודעה לטלפון", "הודעה לנייד", "הודעה לפלאפון",
                 "שלח לי לטלפון", "תשלח לי לטלפון", "שלח לי לנייד", "תשלח לי לנייד",
+                "שלח לי לפלאפון", "תשלח לי לפלאפון", "שלח לאייפד", "תשלח לאייפד",
+                "שלח לי לאייפד", "תשלח לי לאייפד", "שלח לטאבלט", "תשלח לטאבלט",
                 "שלח", "תשלח"
             ]:
                 clean_msg = clean_msg.replace(stop, "")
             clean_msg = clean_msg.strip(" :,-?!")
+
+            is_ipad = any(w in user_text for w in ["אייפד", "איפד", "טאבלט", "ipad", "tablet"])
+            dev_type = "tablet" if is_ipad else "phone"
+
             res_notif = await tool_engine.execute_tool("send_mobile_notification", {
                 "message": clean_msg or user_raw,
                 "title": "הודעה מסוכן AI 📱",
+                "device_type": dev_type,
             })
-            reply = res_notif.get("message", "ההודעה נשלחה בהצלחה לטלפון! 📱")
+            reply = res_notif.get("message", "ההודעה נשלחה בהצלחה! 📱")
         elif is_direct_device_control:
             is_off = any(w in user_text for w in ["תכבה", "תסגור", "כבה", "turn off"])
             action = "turn_off" if is_off else "turn_on"
@@ -810,13 +824,17 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             # Send ONLY notification tools (+ device control if needed)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("send_mobile_notification", "control_device")]
             full_system_prompt = (
-                "אתה סוכן AI חכם בעל גישה ישירה למערכת ההתראות של Home Assistant לשליחת תוכן לטלפון הנייד של המשתמש. "
-                "המשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעה) ישירות לנייד שלו. "
-                "השתמש בכלי send_mobile_notification: "
-                "1. בשדה message – פרט את כל התוכן המלא בצורה עשירה, מסודרת ומפורטת ב-Markdown (אם מתכון – רשימת מצרכים מדויקת, כמויות ושלבי הכנה שלב-אחר-שלב). "
-                "2. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פנקייק אוורירי 🥞'). "
-                "3. בשדה image_url – אם יש קישור ישיר לתמונה או תרשים, ספק אותו. "
-                "לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה ושמחה שהתוכן נשלח לנייד והצג את הפרטים גם כאן בצ'אט לנוחיותו."
+                "אתה סוכן AI חכם בעל גישה ישירה למערכת ההתראות של Home Assistant. "
+                "המשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעה) ישירות למכשיר שלו. "
+                "כללים קריטיים לשליחת התראה למכשיר הנכון: "
+                "1. המערכת מזהה ומקשרת אוטומטית את המשתמש הנוכחי שמדבר איתך (למשל 'eli') ואת המכשירים האישיים שלו. "
+                "2. אם המשתמש ביקש לשלוח לפלאפון / לטלפון / לנייד (או 'שלח לי') – השאר device_type='phone' "
+                "(המערכת תשלח אך ורק לפלאפון האישי שלו, כגון 'אליהו', ולא למכשירים אחרים כגון אייפד/טאבלט!). "
+                "3. אם המשתמש ביקש במפורש לשלוח לאייפד / לטאבלט – הגדר device_type='tablet'. "
+                "4. בשדה message – פרט את כל התוכן המלא בצורה עשירה, מסודרת ומפורטת ב-Markdown (אם מתכון – מצרכים, כמויות מדויקות ושלבי הכנה שלב-אחר-שלב). "
+                "5. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פנקייק אוורירי 🥞'). "
+                "6. בשדה image_url – אם יש קישור ישיר לתמונה או תרשים, ספק אותו. "
+                "לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה וחמה שהתוכן נשלח לפלאפון/מכשיר שלו והצג את הפרטים גם כאן בצ'אט לנוחיותו."
             )
             target_max_tokens = 8192
         elif is_config_file:
