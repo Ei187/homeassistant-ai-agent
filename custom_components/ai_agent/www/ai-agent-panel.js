@@ -126,11 +126,24 @@ class AIAgentPanel extends HTMLElement {
 
   set hass(val) {
     this._hass = val;
+    this._purgeChatSubscriptions(val && val.connection);
     if (!this._initialized && val) {
       this._initialized = true;
       this.loadSettings();
       this.loadPendingActions();
     }
+  }
+
+  _purgeChatSubscriptions(conn) {
+    const c = conn || (this._hass && this._hass.connection);
+    if (!c || !c.subscriptions) return;
+    try {
+      for (const [id, sub] of Object.entries(c.subscriptions)) {
+        if (sub && sub.subscribeMsg && sub.subscribeMsg.type === 'ai_agent/chat') {
+          delete c.subscriptions[id];
+        }
+      }
+    } catch (_) {}
   }
 
   get hass() {
@@ -415,6 +428,14 @@ class AIAgentPanel extends HTMLElement {
       }
     };
 
+    const doCleanup = () => {
+      if (typeof unsub === 'function') {
+        try { unsub(); } catch (_) {}
+        unsub = null;
+      }
+      this._purgeChatSubscriptions();
+    };
+
     const finishMessage = (reply, proposals, fallbackNotice) => {
       if (completed) return;
       completed = true;
@@ -434,9 +455,7 @@ class AIAgentPanel extends HTMLElement {
       this.saveChatHistory();
       this.render();
       this.scrollToBottom();
-      if (typeof unsub === 'function') {
-        try { unsub(); } catch (_) {}
-      }
+      doCleanup();
     };
 
     const tickTypewriter = () => {
@@ -478,9 +497,18 @@ class AIAgentPanel extends HTMLElement {
         return item;
       });
 
+    this._purgeChatSubscriptions();
+    const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    const payload = {
+      type: 'ai_agent/chat',
+      message: text,
+      history: cleanHistory,
+      client_msg_id: clientMsgId,
+    };
+
     try {
       if (this._hass.connection && typeof this._hass.connection.subscribeMessage === 'function') {
-        unsub = await this._hass.connection.subscribeMessage(
+        const unsubPromise = this._hass.connection.subscribeMessage(
           (event) => {
             if (!event) return;
             if (event.type === 'chunk' && event.chunk) {
@@ -493,6 +521,7 @@ class AIAgentPanel extends HTMLElement {
                 this._streamUpdateStatus(assistantMsg.streamingStatus);
               }
             } else if (event.type === 'done') {
+              this._purgeChatSubscriptions();
               isServerDone = true;
               doneReply = event.reply || targetText;
               doneProposals = event.proposals || [];
@@ -510,21 +539,25 @@ class AIAgentPanel extends HTMLElement {
                 startTypewriter();
               }
             } else if (event.type === 'error') {
+              this._purgeChatSubscriptions();
               finishMessage(event.error, [], null);
             }
           },
-          {
-            type: 'ai_agent/chat',
-            message: text,
-            history: cleanHistory,
-          }
+          payload
         );
-      } else {
-        const res = await this._hass.callWS({
-          type: 'ai_agent/chat',
-          message: text,
-          history: cleanHistory,
+
+        unsubPromise.then((unsubFn) => {
+          unsub = unsubFn;
+          if (completed) {
+            doCleanup();
+          }
+        }).catch(() => {
+          doCleanup();
         });
+
+        await unsubPromise;
+      } else {
+        const res = await this._hass.callWS(payload);
         isServerDone = true;
         doneReply = res.reply || '';
         doneProposals = res.proposals || [];
@@ -536,10 +569,15 @@ class AIAgentPanel extends HTMLElement {
         startTypewriter();
       }
     } catch (e) {
+      doCleanup();
       if (!completed) {
         assistantMsg.isStreaming = false;
         assistantMsg.isError = true;
         finishMessage(`⚠️ שגיאה בתקשורת עם הסוכן: ${e.message || e}`, [], null);
+      }
+    } finally {
+      if (completed) {
+        doCleanup();
       }
     }
   }
@@ -963,6 +1001,7 @@ class AIAgentPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this._purgeChatSubscriptions();
     this.chatHistory = this.loadChatHistory();
     this.render();
     this.scrollToBottom();
@@ -2472,5 +2511,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.8.9 (Verified Mobile Notification Delivery & Generative Routing)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.9.0 (Single-Shot Notification Guarantee & WebSocket Replay Purge)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

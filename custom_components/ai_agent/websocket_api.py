@@ -267,14 +267,48 @@ async def _call_free_cloud_ai(
     return None
 
 
+_PROCESSED_CLIENT_MSG_IDS: Dict[str, float] = {}
+
+
 @websocket_api.websocket_command({
     vol.Required("type"): "ai_agent/chat",
     vol.Required("message"): str,
     vol.Optional("history"): list,
+    vol.Optional("client_msg_id"): str,
 })
 @websocket_api.async_response
 async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
     """Process a user chat message through the multi-agent engine."""
+    client_msg_id = msg.get("client_msg_id")
+    now = time.time()
+    # Expire entries older than 2 hours (7200 seconds)
+    if len(_PROCESSED_CLIENT_MSG_IDS) > 200:
+        cutoff = now - 7200
+        expired = [k for k, v in _PROCESSED_CLIENT_MSG_IDS.items() if v < cutoff]
+        for k in expired:
+            _PROCESSED_CLIENT_MSG_IDS.pop(k, None)
+
+    if client_msg_id:
+        if client_msg_id in _PROCESSED_CLIENT_MSG_IDS:
+            _LOGGER.info("Ignoring duplicate or replayed chat message from WebSocket reconnect: %s", client_msg_id)
+            cached_reply = "ההודעה כבר נשלחה ועובדה בהצלחה (נמנעה שליחה כפולה)."
+            connection.send_message(
+                websocket_api.event_message(
+                    msg["id"],
+                    {
+                        "type": "done",
+                        "reply": cached_reply,
+                        "fallback_notice": None,
+                        "actual_thinking_level": "cached",
+                        "actual_model": "cached",
+                        "proposals": [],
+                    },
+                )
+            )
+            connection.send_result(msg["id"], {"reply": cached_reply, "proposals": []})
+            return
+        _PROCESSED_CLIENT_MSG_IDS[client_msg_id] = now
+
     client = hass.data[DOMAIN].get("client")
     settings = hass.data[DOMAIN].get("settings", {})
     api_key = settings.get(CONF_API_KEY, "") or (getattr(client, "api_key", "") if client else "")
@@ -864,13 +898,15 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "- יש לך יכולת מלאה וישירה לשלוח הודעות, התראות, מתכונים, תמונות ותרשימים ישירות למכשיר הנייד של המשתמש בעזרת הכלי send_mobile_notification!\n"
                 "- לעולם אל תגיד 'אני לא יכול לשלוח הודעות ישירות' או 'כמודל שיח אין לי גישה'!\n"
                 "- אם המשתמש שואל אם אתה יכול לשלוח Notify לאפליקציה או הודעה לטלפון – אשר בהתלהבות ובביטחון: 'כן, בהחלט! אני יכול לשלוח ישירות לכל מכשיר שלך כל הודעה, מתכון ותרשים שתבקש!'\n"
+                "- כלל תדירות חד-משמעי (Single-Shot Rule): כל עוד המשתמש לא דרש במפורש תזמון חוזר (כגון 'כל שעה', 'כל יום ב-08:00', 'כל חצי שעה', 'פעמיים ביום'), ההודעה נשלחת פעם אחת בלבד (שליחה חד-פעמית)! אסור לחזור על השליחה או לייצר אוטומציה חוזרת ללא בקשה מפורשת!\n"
+                "- רק אם המשתמש ביקש במפורש תזמון קבוע או שליחה חוזרת (כגון 'שלח לי כל יום ב-8:00' או 'תזכיר לי כל שעה') – השתמש בכלי create_automation כדי להגדיר אוטומציה מתוזמנת ובקש את אישור המשתמש.\n"
                 "- כשהמשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעת בדיקה):\n"
                 "  1. המערכת מזהה ומקשרת אוטומטית את המשתמש הנוכחי שמדבר איתך (למשל 'eli') ואת המכשירים האישיים שלו.\n"
                 "  2. אם המשתמש ביקש לשלוח לפלאפון / לטלפון / לנייד (או 'שלח לי') – השאר device_type='phone' (המערכת תשלח אך ורק לפלאפון האישי שלו כגון 'אליהו', ולא לאייפד/טאבלט!).\n"
                 "  3. אם המשתמש ביקש במפורש לשלוח לאייפד / לטאבלט – הגדר device_type='tablet'.\n"
                 "  4. בשדה message – כתוב ופרט את כל התוכן המלא בצורה עשירה, מקצועית ומפורטת ב-Markdown (אם מתכון – מצרכים, כמויות מדויקות ושלבי הכנה ברורים שלב-אחר-שלב!).\n"
                 "  5. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פיצה איטלקית מושלמת 🍕').\n"
-                "  6. הפעל תמיד את הכלי send_mobile_notification לביצוע השליחה בפועל!\n"
+                "  6. הפעל תמיד את הכלי send_mobile_notification לביצוע השליחה בפועל פעם אחת בלבד!\n"
                 "  7. לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה שהתוכן נשלח לפלאפון שלו והצג את המתכון/התוכן המלא גם כאן בצ'אט לנוחיותו."
             )
             target_max_tokens = 8192
