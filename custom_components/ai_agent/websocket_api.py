@@ -278,7 +278,42 @@ _PROCESSED_CLIENT_MSG_IDS: Dict[str, float] = {}
 })
 @websocket_api.async_response
 async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
-    """Process a user chat message through the multi-agent engine."""
+    """Process a user chat message through the multi-agent engine with top-level error trapping."""
+    try:
+        await _handle_ws_chat_internal(hass, connection, msg)
+    except Exception as err:
+        _LOGGER.exception("Top-level unhandled exception in ws_chat: %s", err)
+        error_msg = f"⚠️ נתקלתי בקושי זמני בעיבוד הבקשה: {err}\n\nאנא נסה שוב או בדוק את הגדרות הסוכן."
+        try:
+            connection.send_message(
+                websocket_api.event_message(
+                    msg["id"],
+                    {
+                        "type": "done",
+                        "reply": error_msg,
+                        "fallback_notice": None,
+                        "actual_thinking_level": "error",
+                        "actual_model": "error",
+                        "proposals": [],
+                    },
+                )
+            )
+            connection.send_result(
+                msg["id"],
+                {
+                    "reply": error_msg,
+                    "fallback_notice": None,
+                    "actual_thinking_level": "error",
+                    "actual_model": "error",
+                    "proposals": [],
+                },
+            )
+        except Exception as send_err:
+            _LOGGER.debug("Could not send top-level error response to websocket: %s", send_err)
+
+
+async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: Dict[str, Any]) -> None:
+    """Internal implementation of ws_chat."""
     client_msg_id = msg.get("client_msg_id")
     now = time.time()
     # Expire entries older than 2 hours (7200 seconds)
@@ -530,6 +565,27 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "- `שלח לי לפלאפון מתכון לפנקייק`\n"
                 "- `שלח לי לטלפון הודעת בדיקה`\n\n"
                 "ואני אשלח אותה מיד ישירות למכשיר שלך!"
+            )
+        elif any(w in user_text for w in [
+            "לא נשלח", "לא קיבלתי", "לא הגיע", "לא נשלחה", "לא שלח",
+            "לא קיבלתי כלום", "לא הגיע כלום", "למה לא נשלח", "למה לא הגיע"
+        ]):
+            send_status("בודק את מצב שירותי ההתראות במערכת...")
+            all_services = hass.services.async_services()
+            notify_services = list(all_services.get("notify", {}).keys())
+            user_devs = tool_engine._get_user_mobile_devices()
+            dev_names = [f"📱 {d['name']} ({d['service'] or 'ללא שירות notify מקושר'})" for d in user_devs]
+            dev_list_str = "\n".join(dev_names) if dev_names else "לא אותרו מכשירים הרשומים ישירות למשתמש הנוכחי."
+            all_notif_str = ", ".join(f"`notify.{s}`" for s in notify_services) if notify_services else "אין שירותי notify רשומים"
+
+            reply = (
+                "🔍 **בדיקת שירותי ההתראות (Notify) ב-Home Assistant:**\n\n"
+                f"**מכשירי המשתמש שזוהו במערכת:**\n{dev_list_str}\n\n"
+                f"**שירותי Notify שפעילים במערכת:**\n{all_notif_str}\n\n"
+                "💡 **אם ההודעה לא הגיעה לטלפון הנייד שלך, ודא את הדברים הבאים:**\n"
+                "1. **אפליקציית Home Assistant Companion** מותקנת בטלפון ומחוברת לשרת זה.\n"
+                "2. בהגדרות הטלפון (וגם בהגדרות האפליקציה > Companion App > Notifications) – ודא שההתראות **מופעלות ומורשות**.\n"
+                "3. בנוסף, כל הודעה שנשלחת מהסוכן נרשמת תמיד גם בלוח ההתראות של Home Assistant (אייקון הפעמון בתפריט הצד)."
             )
 
         elif (has_send_verb and has_mobile_target):
@@ -874,7 +930,8 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
             "send to my phone", "send to mobile", "send to ipad", "send notification", "send to device",
             "send to tablet", "send me", "отправь на телефон", "на телефон", "إرسال إلى الهاتف",
             "notify לאפליקציה", "הודעה לאפליקציה", "לשלוח לאפליקציה", "התראה לאפליקציה",
-            "notify לטלפון", "notify לנייד", "notify לפלאפון", "הודעה לפלאפון"
+            "notify לטלפון", "notify לנייד", "notify לפלאפון", "הודעה לפלאפון",
+            "לא נשלח", "לא קיבלתי", "לא הגיע", "לא שלח", "לא נשלחה"
         ))
         is_esphome = any(k in user_lower for k in ("esphome", "אספהום", "איספהום", "esp32", "esp8266", "d1 mini", "nodemcu"))
         is_addon = not is_notify and any(k in user_lower for k in ("add-on", "addon", "addons", "הרחב", "תוסף", "supervisor", "סופרוויזר", "חנות תוספים"))
@@ -898,6 +955,7 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
                 "- יש לך יכולת מלאה וישירה לשלוח הודעות, התראות, מתכונים, תמונות ותרשימים ישירות למכשיר הנייד של המשתמש בעזרת הכלי send_mobile_notification!\n"
                 "- לעולם אל תגיד 'אני לא יכול לשלוח הודעות ישירות' או 'כמודל שיח אין לי גישה'!\n"
                 "- אם המשתמש שואל אם אתה יכול לשלוח Notify לאפליקציה או הודעה לטלפון – אשר בהתלהבות ובביטחון: 'כן, בהחלט! אני יכול לשלוח ישירות לכל מכשיר שלך כל הודעה, מתכון ותרשים שתבקש!'\n"
+                "- אם המשתמש מדווח שההודעה לא הגיעה או לא נשלחה (למשל 'לא נשלח כלום' או 'לא קיבלתי') – הסבר באדיבות: יש לוודא שהאפליקציה Home Assistant Companion מותקנת ומחוברת במכשיר, ושההתראות מורשות בהגדרות הטלפון. ציין שההודעה נשמרת תמיד גם בלוח ההתראות ב-Home Assistant (אייקון הפעמון), והצע לשלוח שוב או לבדוק את הגדרות המכשיר.\n"
                 "- כלל תדירות חד-משמעי (Single-Shot Rule): כל עוד המשתמש לא דרש במפורש תזמון חוזר (כגון 'כל שעה', 'כל יום ב-08:00', 'כל חצי שעה', 'פעמיים ביום'), ההודעה נשלחת פעם אחת בלבד (שליחה חד-פעמית)! אסור לחזור על השליחה או לייצר אוטומציה חוזרת ללא בקשה מפורשת!\n"
                 "- רק אם המשתמש ביקש במפורש תזמון קבוע או שליחה חוזרת (כגון 'שלח לי כל יום ב-8:00' או 'תזכיר לי כל שעה') – השתמש בכלי create_automation כדי להגדיר אוטומציה מתוזמנת ובקש את אישור המשתמש.\n"
                 "- כשהמשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעת בדיקה):\n"
@@ -1070,13 +1128,27 @@ async def ws_chat(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
         )
     except Exception as err:
         _LOGGER.exception("Error during AI chat handling: %s", err)
+        friendly_err = f"⚠️ נתקלתי בקושי זמני בתקשורת עם ספק ה-AI ({provider}): {err}\n\nאנא נסה שוב או בדוק את מפתח ה-API והגדרות החיבור בהגדרות הסוכן."
         connection.send_message(
             websocket_api.event_message(
                 msg["id"],
                 {
-                    "type": "error",
-                    "error": f"⚠️ שגיאה בתקשורת עם הסוכן: {err}",
+                    "type": "done",
+                    "reply": friendly_err,
+                    "fallback_notice": None,
+                    "actual_thinking_level": "error",
+                    "actual_model": getattr(client, "model", "error"),
+                    "proposals": [],
                 },
             )
         )
-        connection.send_error(msg["id"], "chat_error", str(err))
+        connection.send_result(
+            msg["id"],
+            {
+                "reply": friendly_err,
+                "fallback_notice": None,
+                "actual_thinking_level": "error",
+                "actual_model": getattr(client, "model", "error"),
+                "proposals": [],
+            },
+        )

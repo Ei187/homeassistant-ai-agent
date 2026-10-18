@@ -573,7 +573,11 @@ class AIAgentPanel extends HTMLElement {
       if (!completed) {
         assistantMsg.isStreaming = false;
         assistantMsg.isError = true;
-        finishMessage(`⚠️ שגיאה בתקשורת עם הסוכן: ${e.message || e}`, [], null);
+        const rawErr = e?.message || e?.error?.message || String(e || '');
+        const friendlyErr = (!rawErr || rawErr.toLowerCase().includes('unknown'))
+          ? 'נתקלתי בקושי זמני בתקשורת עם השרת. אנא בדוק את החיבור לרשת ונסה שוב.'
+          : rawErr;
+        finishMessage(`⚠️ שגיאה בתקשורת עם הסוכן: ${friendlyErr}`, [], null);
       }
     } finally {
       if (completed) {
@@ -2511,5 +2515,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.9.0 (Single-Shot Notification Guarantee & WebSocket Replay Purge)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.9.1 (Robust Top-Level Error Trapping & Notification Diagnostics)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 
