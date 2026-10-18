@@ -449,7 +449,8 @@ class AIClient:
                 if err.status == 400 and ("reasoning" in err_text or "thinking" in err_text or "effort" in err_text):
                     _LOGGER.warning("Thinking level '%s' rejected by API for model '%s', falling back", level, active_model)
                     continue
-                raise
+                _LOGGER.warning("API response error calling %s model '%s': %s", self.provider, active_model, err)
+                break
             except Exception as err:
                 last_error = err
                 err_text = str(err).lower()
@@ -457,11 +458,12 @@ class AIClient:
                 if "reasoning" in err_text or "thinking" in err_text or "effort" in err_text:
                     _LOGGER.warning("Thinking level '%s' error for model '%s': %s, falling back", level, active_model, err)
                     continue
-                raise
+                _LOGGER.warning("Exception calling %s model '%s': %s", self.provider, active_model, err)
+                break
 
-        _LOGGER.error("All thinking level fallbacks failed: %s", last_error)
+        _LOGGER.error("Chat execution failed for model '%s': %s", active_model, last_error)
         return {
-            "content": f"⚠️ לא ניתן היה לקבל מענה מהמודל `{active_model}`: {last_error}",
+            "content": f"⚠️ לא ניתן היה לקבל מענה מספק ה-AI `{self.provider}` (מודל: `{active_model}`): {last_error}\n\nאנא בדוק את תקינות מפתח ה-API והחיבור לרשת בהגדרות הסוכן.",
             "tool_calls": [],
             "raw": {},
             "actual_model": active_model,
