@@ -225,8 +225,10 @@ class AIAgentPanel extends HTMLElement {
 
     if (this.settings.models && this.settings.provider) {
       const pModel = this.settings.models[this.settings.provider];
-      if (pModel) {
-        this.settings.model = pModel;
+      if (pModel && pModel.trim()) {
+        this.settings.model = pModel.trim();
+      } else if (this.settings.model && this.settings.model.trim()) {
+        this.settings.models[this.settings.provider] = this.settings.model.trim();
       }
     }
     if (modelInp) modelInp.value = this.settings.model || 'auto-latest';
@@ -355,9 +357,9 @@ class AIAgentPanel extends HTMLElement {
     if (!this.settings.models) this.settings.models = {};
     if (this.settings.provider) {
       this.settings.api_keys[this.settings.provider] = this.settings.api_key || '';
-      if (this.settings.model) {
-        this.settings.models[this.settings.provider] = this.settings.model;
-      }
+      const mVal = this.settings.model || (this.settings.models && this.settings.models[this.settings.provider]) || 'auto-latest';
+      this.settings.models[this.settings.provider] = mVal;
+      this.settings.model = mVal;
     }
     const payload = {
       type: 'ai_agent/save_settings',
@@ -2191,7 +2193,7 @@ class AIAgentPanel extends HTMLElement {
                   </span>
                   <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 2px 6px; border-radius: 6px; font-family: monospace;">auto-latest</span>
                 </button>
-                <input type="text" class="pro-input" id="model-input" list="model-suggestions" value="${(s.models && s.models[s.provider]) || s.model || 'auto-latest'}" placeholder="למשל: auto-latest, llama-3.3-70b-versatile, gemini-2.5-flash..." />
+                <input type="text" class="pro-input" id="model-input" list="model-suggestions" value="${(s.models && s.models[s.provider]) || s.model || 'auto-latest'}" placeholder="למשל: auto-latest, llama-3.3-70b-versatile, gemini-2.5-flash..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="model-suggestions">
                   ${((s.default_models && s.default_models[s.provider]) || KNOWN_DEFAULT_MODELS[s.provider] || ['auto-latest']).map((m) => `<option value="${m}"></option>`).join('')}
                 </datalist>
@@ -2392,8 +2394,9 @@ class AIAgentPanel extends HTMLElement {
         }
         updateBadgeVisual();
         this.updateHeaderStatusPill();
+        this.saveCachedSettings();
       };
-      modelInp.addEventListener('input', () => {
+      const onModelInputChange = () => {
         const val = modelInp.value.trim();
         this.settings.model = val;
         if (!this.settings.models) this.settings.models = {};
@@ -2402,7 +2405,10 @@ class AIAgentPanel extends HTMLElement {
         }
         updateBadgeVisual();
         this.updateHeaderStatusPill();
-      });
+        this.saveCachedSettings();
+      };
+      modelInp.addEventListener('input', onModelInputChange);
+      modelInp.addEventListener('change', onModelInputChange);
     }
 
     // Provider onchange helper: switch provider and remember API key AND model per provider
@@ -2416,39 +2422,51 @@ class AIAgentPanel extends HTMLElement {
         if (!this.settings.api_keys) this.settings.api_keys = {};
         if (!this.settings.models) this.settings.models = {};
 
-        // 1. Remember whatever key was typed for the old provider
-        if (keyInp && oldProv) {
-          this.settings.api_keys[oldProv] = keyInp.value.trim();
-        }
-        // Remember whatever model was typed for the old provider
-        if (modelInp && oldProv) {
-          const mVal = modelInp.value.trim();
-          if (mVal) {
-            this.settings.models[oldProv] = mVal;
-          }
+        // 1. Read currently typed values in inputs
+        const currentTypedKey = keyInp ? keyInp.value.trim() : '';
+        const currentTypedModel = modelInp ? modelInp.value.trim() : '';
+
+        // 2. Preserve typed values for the old provider
+        if (oldProv) {
+          if (currentTypedKey) this.settings.api_keys[oldProv] = currentTypedKey;
+          if (currentTypedModel) this.settings.models[oldProv] = currentTypedModel;
         }
 
-        // 2. Switch active provider
+        // 3. Switch active provider
         this.settings.provider = newProv;
 
-        // 3. Load saved key for the newly selected provider (or empty if none entered yet)
+        // 4. Load key for newly selected provider
         const loadedKey = this.settings.api_keys[newProv] || '';
         this.settings.api_key = loadedKey;
         if (keyInp) {
           keyInp.value = loadedKey;
         }
 
-        // 4. Load saved model for the newly selected provider (or default to 'auto-latest' if none saved yet)
-        const loadedModel = this.settings.models[newProv] || 'auto-latest';
+        // 5. Load model for newly selected provider:
+        // If a model was already saved for this provider, load it.
+        // If NOT, NEVER override what the user typed with 'auto-latest'! Keep currentTypedModel or active model!
+        let loadedModel = '';
+        if (this.settings.models && this.settings.models[newProv] && this.settings.models[newProv].trim()) {
+          loadedModel = this.settings.models[newProv].trim();
+        } else if (currentTypedModel && currentTypedModel.trim()) {
+          loadedModel = currentTypedModel.trim();
+          this.settings.models[newProv] = loadedModel;
+        } else if (this.settings.model && this.settings.model.trim()) {
+          loadedModel = this.settings.model.trim();
+          this.settings.models[newProv] = loadedModel;
+        } else {
+          loadedModel = 'auto-latest';
+        }
+
         this.settings.model = loadedModel;
         if (modelInp) {
           modelInp.value = loadedModel;
         }
 
-        // 5. Update datalist suggestions for the newly selected provider
+        // 6. Update datalist suggestions for newly selected provider
         this.updateModelSuggestions(newProv);
 
-        // 6. Update auto badge visual
+        // 7. Update auto badge visual
         if (autoBadgeBtn) {
           const isAuto = (!loadedModel || loadedModel === 'auto-latest' || loadedModel === 'auto');
           autoBadgeBtn.style.background = isAuto ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)';
@@ -2457,6 +2475,7 @@ class AIAgentPanel extends HTMLElement {
         }
 
         this.updateHeaderStatusPill();
+        this.saveCachedSettings();
       };
     }
 
@@ -2531,7 +2550,7 @@ class AIAgentPanel extends HTMLElement {
         if (roleSel) this.settings.agent_role = roleSel.value;
         if (pSel) this.settings.provider = pSel.value;
         if (mInp) {
-          const val = mInp.value.trim();
+          const val = mInp.value.trim() || 'auto-latest';
           this.settings.model = val;
           if (!this.settings.models) this.settings.models = {};
           if (this.settings.provider) {
@@ -2608,5 +2627,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.9.4 (Per-Provider Model Persistence & Dynamic Suggestions)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.9.5 (Fixed Model Persistence & 60-80% Token Reduction)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

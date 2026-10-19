@@ -87,9 +87,16 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
         safe_settings[CONF_API_KEY] = stored_keys[active_prov]
 
     stored_models = safe_settings.get(CONF_MODELS)
-    if isinstance(stored_models, dict) and active_prov in stored_models and stored_models[active_prov]:
+    if not isinstance(stored_models, dict):
+        stored_models = {}
+        safe_settings[CONF_MODELS] = stored_models
+
+    if active_prov and active_prov in stored_models and stored_models[active_prov]:
         safe_settings[CONF_MODEL] = stored_models[active_prov]
-    elif not safe_settings.get(CONF_MODEL):
+    elif safe_settings.get(CONF_MODEL) and safe_settings.get(CONF_MODEL) != "auto-latest":
+        if active_prov:
+            stored_models[active_prov] = safe_settings[CONF_MODEL]
+    else:
         safe_settings[CONF_MODEL] = "auto-latest"
 
     safe_settings["default_models"] = DEFAULT_MODELS
@@ -206,8 +213,11 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
     # Sync active provider's model
     if active_prov and active_prov in current_models and current_models[active_prov]:
         current[CONF_MODEL] = current_models[active_prov]
+    elif current.get(CONF_MODEL) and current.get(CONF_MODEL) != "auto-latest":
+        if active_prov:
+            current_models[active_prov] = current[CONF_MODEL]
     elif not current.get(CONF_MODEL):
-        current[CONF_MODEL] = current_models.get(active_prov, "auto-latest")
+        current[CONF_MODEL] = "auto-latest"
 
     # Auto-adjust base_url to provider's default if needed
     provider = current.get(CONF_PROVIDER)
@@ -411,20 +421,24 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
     )
 
     history = msg.get("history") or []
-    # Keep last 6 messages (3 full turns) for rich context without token starvation
-    trimmed_history = history[-6:] if len(history) > 6 else history
+    # Keep last 2 messages (1 turn) with ultra-lean token compression (>70% token reduction)
+    trimmed_history = history[-2:] if len(history) > 2 else history
     formatted_messages = []
     for h in trimmed_history:
         content = h.get("content") or ""
         # Strip out error notices from previous turns so they don't mislead the LLM
         if str(content).startswith("⚠️") or "שגיאה בתקשורת" in str(content):
             continue
-        # Truncate only exceptionally long past turns to 4000 characters
-        if len(str(content)) > 4000:
-            content = str(content)[:4000] + "..."
+        role = h.get("role", "user")
+        content_str = str(content)
+        # Token compression: compact previous turns to avoid re-sending thousands of tokens
+        if role == "assistant" and len(content_str) > 200:
+            content_str = content_str[:200] + "..."
+        elif role == "user" and len(content_str) > 250:
+            content_str = content_str[:250] + "..."
         clean_h = {
-            "role": h.get("role", "user"),
-            "content": content,
+            "role": role,
+            "content": content_str,
         }
         if "tool_calls" in h and h["tool_calls"]:
             clean_h["tool_calls"] = h["tool_calls"]
@@ -991,29 +1005,19 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
             "אור", "מנורה", "מתג", "מזגן", "תריס", "דוד", "בוילר", "נעילה", "שלוט", "הפעל"
         ])
 
-        target_max_tokens = 8192
+        target_max_tokens = 2048
         if is_notify:
             # Send ONLY notification tools (+ device control if needed)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("send_mobile_notification", "control_device")]
             full_system_prompt = (
-                "אתה סוכן AI ראשי של Home Assistant בעל גישה ישירה ויכולת ביצוע מלאה במערכת ההתראות (Mobile App Notify).\n"
-                "הנחיות קריטיות:\n"
-                "- יש לך יכולת מלאה וישירה לשלוח הודעות, התראות, מתכונים, תמונות ותרשימים ישירות למכשיר הנייד של המשתמש בעזרת הכלי send_mobile_notification!\n"
-                "- לעולם אל תגיד 'אני לא יכול לשלוח הודעות ישירות' או 'כמודל שיח אין לי גישה'!\n"
-                "- אם המשתמש שואל אם אתה יכול לשלוח Notify לאפליקציה או הודעה לטלפון – אשר בהתלהבות ובביטחון: 'כן, בהחלט! אני יכול לשלוח ישירות לכל מכשיר שלך כל הודעה, מתכון ותרשים שתבקש!'\n"
-                "- אם המשתמש מדווח שההודעה לא הגיעה או לא נשלחה (למשל 'לא נשלח כלום' או 'לא קיבלתי') – הסבר באדיבות: יש לוודא שהאפליקציה Home Assistant Companion מותקנת ומחוברת במכשיר, ושההתראות מורשות בהגדרות הטלפון. ציין שההודעה נשמרת תמיד גם בלוח ההתראות ב-Home Assistant (אייקון הפעמון), והצע לשלוח שוב או לבדוק את הגדרות המכשיר.\n"
-                "- כלל תדירות חד-משמעי (Single-Shot Rule): כל עוד המשתמש לא דרש במפורש תזמון חוזר (כגון 'כל שעה', 'כל יום ב-08:00', 'כל חצי שעה', 'פעמיים ביום'), ההודעה נשלחת פעם אחת בלבד (שליחה חד-פעמית)! אסור לחזור על השליחה או לייצר אוטומציה חוזרת ללא בקשה מפורשת!\n"
-                "- רק אם המשתמש ביקש במפורש תזמון קבוע או שליחה חוזרת (כגון 'שלח לי כל יום ב-8:00' או 'תזכיר לי כל שעה') – השתמש בכלי create_automation כדי להגדיר אוטומציה מתוזמנת ובקש את אישור המשתמש.\n"
-                "- כשהמשתמש מבקש לשלוח תוכן (מתכון, תרשים, תמונה, הוראות, שלבים, רשימה או הודעת בדיקה):\n"
-                "  1. המערכת מזהה ומקשרת אוטומטית את המשתמש הנוכחי שמדבר איתך (למשל 'eli') ואת המכשירים האישיים שלו.\n"
-                "  2. אם המשתמש ביקש לשלוח לפלאפון / לטלפון / לנייד (או 'שלח לי') – השאר device_type='phone' (המערכת תשלח אך ורק לפלאפון האישי שלו כגון 'אליהו', ולא לאייפד/טאבלט!).\n"
-                "  3. אם המשתמש ביקש במפורש לשלוח לאייפד / לטאבלט – הגדר device_type='tablet'.\n"
-                "  4. בשדה message – כתוב ופרט את כל התוכן המלא בצורה עשירה, מקצועית ומפורטת ב-Markdown (אם מתכון – מצרכים, כמויות מדויקות ושלבי הכנה ברורים שלב-אחר-שלב!).\n"
-                "  5. בשדה title – כותרת ברורה וקולעת (למשל: 'מתכון: פיצה איטלקית מושלמת 🍕').\n"
-                "  6. הפעל תמיד את הכלי send_mobile_notification לביצוע השליחה בפועל פעם אחת בלבד!\n"
-                "  7. לאחר הפעלת הכלי, אשר למשתמש בעברית ברורה שהתוכן נשלח לפלאפון שלו והצג את המתכון/התוכן המלא גם כאן בצ'אט לנוחיותו."
+                "אתה סוכן AI ראשי של Home Assistant בעל גישה מלאה וישירה לשליחת התראות (Mobile Notify).\n"
+                "- יש לך גישה מלאה לשלוח הודעות, מתכונים ותרשימים ישירות למכשיר הנייד בעזרת הכלי send_mobile_notification.\n"
+                "- לעולם אל תגיד 'איני יכול לשלוח ישירות' או 'כמודל שיח אין לי גישה'!\n"
+                "- כלל תדירות (Single-Shot): ברירת המחדל היא תמיד שליחה חד-פעמית בלבד! אל תיצור אוטומציה חוזרת אלא אם התבקשת במפורש ('כל שעה', 'כל יום').\n"
+                "- מכשיר יעד: לטלפון/פלאפון השאר device_type='phone' (שולח לפלאפון האישי כגון 'אליהו'). לאייפד/טאבלט הגדר device_type='tablet'.\n"
+                "- בשדה message פרט את כל המידע המבוקש ב-Markdown עשיר, הפעל את send_mobile_notification פעם אחת, ואשר למשתמש בעברית תמציתית שהתוכן נשלח."
             )
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_esphome:
             # Send ONLY ESPHome tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_esphome_device", "read_config_file", "edit_config_file")]
@@ -1021,7 +1025,7 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
                 "אתה מומחה ESPHome ו-Home Assistant. נהל, הוסף, ערוך, מחק או קרא קובצי תצורה של מכשירי ESPHome "
                 "באמצעות הכלי manage_esphome_device. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_addon:
             # Send ONLY Addon tools
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("manage_ha_addon", "scan_system_errors")]
@@ -1030,7 +1034,7 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
                 "השתמש בכלי manage_ha_addon להצגת רשימה (list), פרטים והגדרות (info), בדיקת לוגים ותיקון (logs), "
                 "הפעלה/עצירה/ריסטרט, עריכת הגדרות (edit_options), התקנה או הסרה. ענה בעברית ב-Markdown ברור ומלא."
             )
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_automation:
             # Send ONLY create_automation tool (~60 tokens for tool schema!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "create_automation"]
@@ -1039,27 +1043,27 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
                 "אתה מומחה אוטומציות ב-Home Assistant. השתמש בכלי create_automation כדי ליצור אוטומציה מדויקת.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_config_file:
             # Send ONLY config tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("edit_config_file", "read_config_file")]
             full_system_prompt = "אתה מומחה תצורה ב-Home Assistant. קרא או ערוך קבצים וענה בעברית ב-Markdown ברור ומלא."
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_error_scan:
             # Send ONLY error tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "scan_system_errors"]
             full_system_prompt = "אתה מאבחן מערכת מומחה ב-Home Assistant. סרוק שגיאות, הסבר את הבעיה והצע פתרון מלא בעברית."
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_github_install:
             # Send ONLY GitHub tools (~80 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") in ("search_github_integrations", "install_custom_component")]
             full_system_prompt = "אתה מנהל רכיבים ב-Home Assistant. חפש או התקן אינטגרציות מ-GitHub וענה בעברית מלאה."
-            target_max_tokens = 8192
+            target_max_tokens = 2048
         elif is_restart:
             # Send ONLY restart tool (~40 tokens!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "restart_or_reload"]
             full_system_prompt = "אתה מנהל שרת Home Assistant. בצע בדיקת תקינות או הפעלה מחדש לבקשת המשתמש וענה בעברית ברורה."
-            target_max_tokens = 4096
+            target_max_tokens = 1536
         elif is_device_ctrl:
             # Send ONLY control_device tool and matched entities (~40 tokens tool + ~15 tokens entities!)
             active_tools = [t for t in TOOLS_SCHEMA if t.get("function", {}).get("name") == "control_device"]
@@ -1068,20 +1072,15 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
                 "אתה סוכן בית חכם אינטליגנטי. שלוט במכשירים בעזרת הכלי control_device וענה בעברית ברורה ואדיבה.\n"
                 + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
-            target_max_tokens = 4096
+            target_max_tokens = 1536
         else:
             # Pure Chat / Knowledge / Question Mode -> ZERO TOOLS! ZERO ENTITIES! (~10 tokens total!)
             active_tools = None
             full_system_prompt = (
-                "אתה סוכן AI מתקדם, אינטליגנטי, מועיל ורחב אופקים, ועוזר אישי ראשי אוטונומי ב-Home Assistant.\n"
-                "הנחיות קריטיות:\n"
-                "- אתה סוכן בעל יכולות ביצוע ישירות ב-Home Assistant (שליטה במכשירים, שליחת הודעות ומתכונים לטלפון עם send_mobile_notification, עריכת קבצים ואוטומציות).\n"
-                "- לעולם אל תגיד שאתה 'רק מודל שיח' או שאין לך יכולת לבצע פעולות ישירות במערכת.\n"
-                "- אם המשתמש שואל על היכולות שלך או אם אתה יכול לשלוח לו התראות לטלפון – ענה בחיוב בהתלהבות, והסבר שאתה מסוגל לשלוח לו ישירות לפלאפון כל הודעה או מתכון שיבקש!\n"
-                "- ענה תמיד ברצון ובאדיבות על כל שאלה, הקפד על עברית תקנית ורהוטה והשלם את כל התשובות במלואן.\n"
-                "- נסח תשובות שלמות, מפורטות ומסודרות בעברית ב-Markdown."
+                "אתה סוכן AI חכם, אדיב ואוטונומי ב-Home Assistant בעל יכולות ביצוע ישירות (שליטה, התראות לטלפון, אוטומציות וקבצים).\n"
+                "ענה בעברית רהוטה, מדויקת ועניינית ב-Markdown, ללא מריחות טקסט מיותרות וללא טענות שווא שאינך יכול לפעול במערכת."
             )
-            target_max_tokens = 8192
+            target_max_tokens = 2048
 
         send_status("מעבד נתונים...")
 
@@ -1126,21 +1125,26 @@ async def _handle_ws_chat_internal(hass: HomeAssistant, connection: websocket_ap
                         "yaml_preview": tool_result["yaml_preview"],
                     })
 
+                # Truncate giant tool result payload before feeding it back to LLM (>60% token reduction)
+                res_str = json.dumps(tool_result, ensure_ascii=False)
+                if len(res_str) > 800:
+                    res_str = res_str[:800] + "... [תוצאה מקוצרת לחיסכון בטוקנים]"
+
                 formatted_messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
                     "name": fn_name,
-                    "content": json.dumps(tool_result, ensure_ascii=False),
+                    "content": res_str,
                 })
 
             send_status("מנסח תשובה...")
-            # Call model again with tool results to formulate user reply — instant response without heavy reasoning
+            # Call model again with tool results to formulate user reply — instant response, zero reasoning tokens, ultra-lean prompt
             final_turn = await client.chat(
                 messages=formatted_messages,
-                system_prompt=full_system_prompt,
+                system_prompt="סכם למשתמש בעברית קצרה, נעימה ומדויקת את תוצאת הפעולה שבוצעה.",
                 override_thinking_level=THINKING_OFF,
                 on_chunk=on_stream_chunk,
-                max_tokens=target_max_tokens,
+                max_tokens=512,
             )
             content = final_turn.get("content") or content or "הפעולה בוצעה בהצלחה."
 

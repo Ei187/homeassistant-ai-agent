@@ -81,38 +81,40 @@ class AIAgentConversationEntity(conversation.ConversationEntity):
                 response=intent_response, conversation_id=conv_id
             )
 
-        # Full AI Model Execution with Real Home Entities Context & Multi-Turn Tools
+        # Full AI Model Execution with Real Home Entities Context & Multi-Turn Tools - ultra-lean token footprint
         try:
-            entities_text = get_entities_context(self.hass)
+            entities_text = get_entities_context(self.hass, max_entities=6, compact=True, query_filter=user_text)
             full_system_prompt = (
-                f"{base_prompt}\n\n"
-                f"### רשימת המכשירים והישויות בבית (Home Entities & Current States):\n"
-                f"{entities_text}\n\n"
-                "הנחיות חשובות לפעולה:\n"
-                "1. יישום עקרון 18 (התאמת תשובה למטרה): כשמשתמש מבקש לשלוט במכשיר (הדלקה, כיבוי, שינוי טמפרטורה), קרא מיד לכלי control_device עם ה-entity_id המדויק מהרשימה וענה במשפט קצר ומדויק בלבד ללא הרצאות.\n"
-                "2. כשמשתמש שואל מה פתוח/דולק או על נתון של מכשיר, ענה ישירות לפי המצב הנוכחי ברשימה או קרא לכלי המתאים.\n"
-                "3. ענה תמיד בעברית טבעית, שוטפת ומקצועית. עצב את תשובתך בצורה מסודרת ומרווחת באמצעות Markdown (כותרות ###, הדגשות, ורשימות ממוספרות 1., 2.).\n"
-                "4. שליחת הודעות והתראות לנייד: יש לך יכולת מלאה וישירה לשלוח הודעות, מתכונים ותרשימים לפלאפון של המשתמש! כל שליחה היא חד-פעמית לחלוטין (פעם אחת בלבד) אלא אם המשתמש דרש במפורש שליחה חוזרת מתוזמנת (כגון 'כל שעה', 'כל יום'). לעולם אל תסרב או תטען שאתה מודל שיח בלבד."
+                "אתה סוכן AI חכם, מהיר ויעיל ב-Home Assistant. "
+                "שלוט במכשירים בעזרת control_device, שלח הודעות לפלאפון בעזרת send_mobile_notification, "
+                "וענה בעברית מדויקת ותמציתית.\n"
+                + (f"מכשירים רלוונטיים:\n{entities_text}" if entities_text else "")
             )
 
-            # Retrieve conversation history
+            # Retrieve conversation history - keep last 2 messages to slash history token bloat
             if conv_id not in CONVERSATION_HISTORIES:
                 CONVERSATION_HISTORIES[conv_id] = []
             history = CONVERSATION_HISTORIES[conv_id]
             history.append({"role": "user", "content": user_text})
 
-            # Trim history to keep last 10 messages
-            if len(history) > 10:
-                history = history[-10:]
+            if len(history) > 2:
+                history = history[-2:]
                 CONVERSATION_HISTORIES[conv_id] = history
 
-            messages_payload = list(history)
+            messages_payload = []
+            for h in history:
+                c_str = str(h.get("content") or "")
+                if h.get("role") == "assistant" and len(c_str) > 200:
+                    c_str = c_str[:200] + "..."
+                messages_payload.append({"role": h.get("role", "user"), "content": c_str})
 
-            # Step 1: Call Model with Tools
+            # Step 1: Call Model with Tools and lean tokens
             response = await client.chat(
                 messages=messages_payload,
                 system_prompt=full_system_prompt,
                 tools=TOOLS_SCHEMA,
+                override_thinking_level=THINKING_OFF,
+                max_tokens=1024,
             )
 
             tool_calls = response.get("tool_calls") or []
