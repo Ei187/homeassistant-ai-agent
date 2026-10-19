@@ -4,6 +4,16 @@
  * Full Markdown Parsing with Code Highlighting, Copy Button & ChatGPT-Style Message Editing.
  */
 
+const KNOWN_DEFAULT_MODELS = {
+  openai: ['auto-latest', 'gpt-4o-mini', 'gpt-4o', 'o3-mini', 'o1', 'gpt-6-astra'],
+  gemini: ['auto-latest', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+  anthropic: ['auto-latest', 'claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
+  deepseek: ['auto-latest', 'deepseek-chat', 'deepseek-reasoner'],
+  openrouter: ['auto-latest', 'google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free'],
+  groq: ['auto-latest', 'llama-3.3-70b-versatile', 'deepseek-r1-distill-llama-70b', 'qwen-2.5-32b', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+  custom: ['auto-latest', 'llama3.3', 'qwen2.5-coder', 'mistral-large'],
+};
+
 class AIAgentPanel extends HTMLElement {
   constructor() {
     super();
@@ -59,6 +69,7 @@ class AIAgentPanel extends HTMLElement {
       agent_role: 'omni',
       provider: 'openai',
       model: 'auto-latest',
+      models: {},
       thinking_level: 'high',
       require_approval: true,
       notify_mobile: true,
@@ -165,6 +176,17 @@ class AIAgentPanel extends HTMLElement {
         } else if (this.settings.api_key && this.settings.provider) {
           this.settings.api_keys[this.settings.provider] = this.settings.api_key;
         }
+
+        if (!this.settings.models) this.settings.models = {};
+        if (res.models && typeof res.models === 'object') {
+          this.settings.models = { ...this.settings.models, ...res.models };
+        }
+        if (this.settings.provider && this.settings.models[this.settings.provider]) {
+          this.settings.model = this.settings.models[this.settings.provider];
+        } else if (this.settings.model && this.settings.provider) {
+          this.settings.models[this.settings.provider] = this.settings.model;
+        }
+
         if (res.resolved_model && res.resolved_model !== 'free-engine') {
           this.setResolvedModel(this.settings.provider, res.resolved_model);
         }
@@ -174,6 +196,18 @@ class AIAgentPanel extends HTMLElement {
     } catch (e) {
       console.warn('Could not load AI Agent settings from WS', e);
     }
+  }
+
+  updateModelSuggestions(provider) {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const datalist = root.querySelector('#model-suggestions');
+    if (!datalist) return;
+    const prov = provider || this.settings?.provider || 'openai';
+    const list = (this.settings && this.settings.default_models && this.settings.default_models[prov])
+      || KNOWN_DEFAULT_MODELS[prov]
+      || ['auto-latest'];
+    datalist.innerHTML = list.map((m) => `<option value="${m}"></option>`).join('');
   }
 
   syncSettingsToUI() {
@@ -188,7 +222,14 @@ class AIAgentPanel extends HTMLElement {
 
     if (roleSel && this.settings.agent_role) roleSel.value = this.settings.agent_role;
     if (provSel && this.settings.provider) provSel.value = this.settings.provider;
-    if (modelInp && this.settings.model) modelInp.value = this.settings.model;
+
+    if (this.settings.models && this.settings.provider) {
+      const pModel = this.settings.models[this.settings.provider];
+      if (pModel) {
+        this.settings.model = pModel;
+      }
+    }
+    if (modelInp) modelInp.value = this.settings.model || 'auto-latest';
 
     if (this.settings.api_keys && this.settings.provider) {
       const pKey = this.settings.api_keys[this.settings.provider];
@@ -197,6 +238,8 @@ class AIAgentPanel extends HTMLElement {
       }
     }
     if (keyInp) keyInp.value = this.settings.api_key || '';
+
+    this.updateModelSuggestions(this.settings.provider);
 
     const autoBadgeBtn = root.querySelector('#auto-model-badge-btn');
     if (autoBadgeBtn) {
@@ -309,14 +352,19 @@ class AIAgentPanel extends HTMLElement {
   async saveSettings() {
     if (!this._hass) return;
     if (!this.settings.api_keys) this.settings.api_keys = {};
+    if (!this.settings.models) this.settings.models = {};
     if (this.settings.provider) {
       this.settings.api_keys[this.settings.provider] = this.settings.api_key || '';
+      if (this.settings.model) {
+        this.settings.models[this.settings.provider] = this.settings.model;
+      }
     }
     const payload = {
       type: 'ai_agent/save_settings',
       agent_role: this.settings.agent_role,
       provider: this.settings.provider,
       model: this.settings.model,
+      models: this.settings.models || {},
       thinking_level: this.settings.thinking_level,
       api_key: this.settings.api_key || '',
       api_keys: this.settings.api_keys || {},
@@ -332,8 +380,14 @@ class AIAgentPanel extends HTMLElement {
         if (res.settings.api_keys && typeof res.settings.api_keys === 'object') {
           this.settings.api_keys = { ...this.settings.api_keys, ...res.settings.api_keys };
         }
+        if (res.settings.models && typeof res.settings.models === 'object') {
+          this.settings.models = { ...this.settings.models, ...res.settings.models };
+        }
         if (this.settings.provider && this.settings.api_keys[this.settings.provider]) {
           this.settings.api_key = this.settings.api_keys[this.settings.provider];
+        }
+        if (this.settings.provider && this.settings.models[this.settings.provider]) {
+          this.settings.model = this.settings.models[this.settings.provider];
         }
         if (res.settings.resolved_model && res.settings.resolved_model !== 'free-engine') {
           this.setResolvedModel(this.settings.provider, res.settings.resolved_model);
@@ -2137,7 +2191,10 @@ class AIAgentPanel extends HTMLElement {
                   </span>
                   <span style="font-size: 11px; background: rgba(255, 255, 255, 0.18); padding: 2px 6px; border-radius: 6px; font-family: monospace;">auto-latest</span>
                 </button>
-                <input type="text" class="pro-input" id="model-input" value="${s.model || 'auto-latest'}" placeholder="למשל: auto-latest, llama-3.3-70b-versatile, gemini-2.5-flash..." />
+                <input type="text" class="pro-input" id="model-input" list="model-suggestions" value="${(s.models && s.models[s.provider]) || s.model || 'auto-latest'}" placeholder="למשל: auto-latest, llama-3.3-70b-versatile, gemini-2.5-flash..." />
+                <datalist id="model-suggestions">
+                  ${((s.default_models && s.default_models[s.provider]) || KNOWN_DEFAULT_MODELS[s.provider] || ['auto-latest']).map((m) => `<option value="${m}"></option>`).join('')}
+                </datalist>
               </div>
 
               <!-- מלבן 4: רמת חשיבה ומהירות -->
@@ -2329,12 +2386,26 @@ class AIAgentPanel extends HTMLElement {
         e.preventDefault();
         modelInp.value = 'auto-latest';
         this.settings.model = 'auto-latest';
+        if (!this.settings.models) this.settings.models = {};
+        if (this.settings.provider) {
+          this.settings.models[this.settings.provider] = 'auto-latest';
+        }
         updateBadgeVisual();
+        this.updateHeaderStatusPill();
       };
-      modelInp.addEventListener('input', updateBadgeVisual);
+      modelInp.addEventListener('input', () => {
+        const val = modelInp.value.trim();
+        this.settings.model = val;
+        if (!this.settings.models) this.settings.models = {};
+        if (this.settings.provider) {
+          this.settings.models[this.settings.provider] = val;
+        }
+        updateBadgeVisual();
+        this.updateHeaderStatusPill();
+      });
     }
 
-    // Provider onchange helper: switch provider and remember API key per provider
+    // Provider onchange helper: switch provider and remember API key AND model per provider
     const provSel = root.querySelector('#provider-select');
     const keyInp = root.querySelector('#api-key-input');
     if (provSel) {
@@ -2343,10 +2414,18 @@ class AIAgentPanel extends HTMLElement {
         const newProv = provSel.value;
 
         if (!this.settings.api_keys) this.settings.api_keys = {};
+        if (!this.settings.models) this.settings.models = {};
 
         // 1. Remember whatever key was typed for the old provider
         if (keyInp && oldProv) {
           this.settings.api_keys[oldProv] = keyInp.value.trim();
+        }
+        // Remember whatever model was typed for the old provider
+        if (modelInp && oldProv) {
+          const mVal = modelInp.value.trim();
+          if (mVal) {
+            this.settings.models[oldProv] = mVal;
+          }
         }
 
         // 2. Switch active provider
@@ -2359,15 +2438,22 @@ class AIAgentPanel extends HTMLElement {
           keyInp.value = loadedKey;
         }
 
-        // 4. Default model to auto-latest for the new provider
+        // 4. Load saved model for the newly selected provider (or default to 'auto-latest' if none saved yet)
+        const loadedModel = this.settings.models[newProv] || 'auto-latest';
+        this.settings.model = loadedModel;
         if (modelInp) {
-          modelInp.value = 'auto-latest';
+          modelInp.value = loadedModel;
         }
-        this.settings.model = 'auto-latest';
+
+        // 5. Update datalist suggestions for the newly selected provider
+        this.updateModelSuggestions(newProv);
+
+        // 6. Update auto badge visual
         if (autoBadgeBtn) {
-          autoBadgeBtn.style.background = 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))';
-          autoBadgeBtn.style.borderColor = '#0a84ff';
-          autoBadgeBtn.style.boxShadow = '0 4px 14px rgba(10, 132, 255, 0.35)';
+          const isAuto = (!loadedModel || loadedModel === 'auto-latest' || loadedModel === 'auto');
+          autoBadgeBtn.style.background = isAuto ? 'linear-gradient(135deg, rgba(10, 132, 255, 0.4), rgba(191, 90, 242, 0.4))' : 'rgba(255, 255, 255, 0.08)';
+          autoBadgeBtn.style.borderColor = isAuto ? '#0a84ff' : 'rgba(255, 255, 255, 0.16)';
+          autoBadgeBtn.style.boxShadow = isAuto ? '0 4px 14px rgba(10, 132, 255, 0.35)' : 'none';
         }
 
         this.updateHeaderStatusPill();
@@ -2444,7 +2530,14 @@ class AIAgentPanel extends HTMLElement {
 
         if (roleSel) this.settings.agent_role = roleSel.value;
         if (pSel) this.settings.provider = pSel.value;
-        if (mInp) this.settings.model = mInp.value.trim();
+        if (mInp) {
+          const val = mInp.value.trim();
+          this.settings.model = val;
+          if (!this.settings.models) this.settings.models = {};
+          if (this.settings.provider) {
+            this.settings.models[this.settings.provider] = val;
+          }
+        }
 
         if (!this.settings.api_keys) this.settings.api_keys = {};
         if (kInp) {
@@ -2515,5 +2608,5 @@ if (!window.customCards.some((c) => c.type === 'ai-agent-card')) {
   });
 }
 
-console.info('%c🚀 AI Agent Pro v1.9.3 (Fixed missing import time in websocket_api)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
+console.info('%c🚀 AI Agent Pro v1.9.4 (Per-Provider Model Persistence & Dynamic Suggestions)', 'background: #0a84ff; color: #fff; font-weight: bold; padding: 4px 8px; border-radius: 4px;');
 

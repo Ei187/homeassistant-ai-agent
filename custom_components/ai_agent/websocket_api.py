@@ -24,11 +24,13 @@ from .const import (
     CONF_BASE_URL,
     CONF_MOBILE_NOTIFY_SERVICE,
     CONF_MODEL,
+    CONF_MODELS,
     CONF_NOTIFY_MOBILE,
     CONF_PROVIDER,
     CONF_REQUIRE_APPROVAL,
     CONF_THINKING_LEVEL,
     DEFAULT_BASE_URLS,
+    DEFAULT_MODELS,
     DEFAULT_SETTINGS,
     DOMAIN,
     STORAGE_KEY,
@@ -72,11 +74,25 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
         if settings.get(CONF_API_KEY) and settings.get(CONF_PROVIDER):
             settings[CONF_API_KEYS][settings[CONF_PROVIDER]] = settings[CONF_API_KEY]
 
+    # Ensure CONF_MODELS exists and is synced per provider
+    if CONF_MODELS not in settings or not isinstance(settings.get(CONF_MODELS), dict):
+        settings[CONF_MODELS] = {}
+        if settings.get(CONF_MODEL) and settings.get(CONF_PROVIDER):
+            settings[CONF_MODELS][settings[CONF_PROVIDER]] = settings[CONF_MODEL]
+
     safe_settings = dict(settings)
     active_prov = safe_settings.get(CONF_PROVIDER)
     stored_keys = safe_settings.get(CONF_API_KEYS)
     if isinstance(stored_keys, dict) and active_prov in stored_keys and stored_keys[active_prov]:
         safe_settings[CONF_API_KEY] = stored_keys[active_prov]
+
+    stored_models = safe_settings.get(CONF_MODELS)
+    if isinstance(stored_models, dict) and active_prov in stored_models and stored_models[active_prov]:
+        safe_settings[CONF_MODEL] = stored_models[active_prov]
+    elif not safe_settings.get(CONF_MODEL):
+        safe_settings[CONF_MODEL] = "auto-latest"
+
+    safe_settings["default_models"] = DEFAULT_MODELS
 
     key = safe_settings.get(CONF_API_KEY, "")
     if key and (key.startswith("••••") or key.startswith("****")):
@@ -104,6 +120,7 @@ async def ws_get_settings(hass: HomeAssistant, connection: websocket_api.ActiveC
     vol.Optional(CONF_AGENT_ROLE): str,
     vol.Optional(CONF_PROVIDER): str,
     vol.Optional(CONF_MODEL): str,
+    vol.Optional(CONF_MODELS): dict,
     vol.Optional(CONF_THINKING_LEVEL): str,
     vol.Optional(CONF_API_KEY): vol.Any(str, None),
     vol.Optional(CONF_API_KEYS): dict,
@@ -129,7 +146,7 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
             current.update({k: v for k, v in stored_data.items() if v is not None and v != ""})
         domain_data["settings"] = current
 
-    for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_MODEL, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL, CONF_NOTIFY_MOBILE, CONF_MOBILE_NOTIFY_SERVICE):
+    for key in (CONF_AGENT_ROLE, CONF_PROVIDER, CONF_THINKING_LEVEL, CONF_BASE_URL, CONF_REQUIRE_APPROVAL, CONF_NOTIFY_MOBILE, CONF_MOBILE_NOTIFY_SERVICE):
         if key in msg and msg[key] is not None:
             current[key] = msg[key]
 
@@ -163,6 +180,34 @@ async def ws_save_settings(hass: HomeAssistant, connection: websocket_api.Active
         current[CONF_API_KEY] = current_keys[active_prov]
     elif active_prov and not current.get(CONF_API_KEY):
         current[CONF_API_KEY] = current_keys.get(active_prov, "")
+
+    # Handle CONF_MODELS dictionary per provider
+    current_models = current.get(CONF_MODELS)
+    if not isinstance(current_models, dict):
+        current_models = {}
+        current[CONF_MODELS] = current_models
+
+    if CONF_MODELS in msg and isinstance(msg[CONF_MODELS], dict):
+        for prov, p_m in msg[CONF_MODELS].items():
+            if p_m is not None:
+                p_m_str = str(p_m).strip()
+                if p_m_str:
+                    current_models[prov] = p_m_str
+
+    if CONF_MODEL in msg:
+        raw_model = msg[CONF_MODEL]
+        if raw_model is not None:
+            raw_m_str = str(raw_model).strip()
+            if raw_m_str:
+                current[CONF_MODEL] = raw_m_str
+                if active_prov:
+                    current_models[active_prov] = raw_m_str
+
+    # Sync active provider's model
+    if active_prov and active_prov in current_models and current_models[active_prov]:
+        current[CONF_MODEL] = current_models[active_prov]
+    elif not current.get(CONF_MODEL):
+        current[CONF_MODEL] = current_models.get(active_prov, "auto-latest")
 
     # Auto-adjust base_url to provider's default if needed
     provider = current.get(CONF_PROVIDER)

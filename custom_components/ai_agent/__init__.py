@@ -22,6 +22,7 @@ from .const import (
     CONF_API_KEYS,
     CONF_BASE_URL,
     CONF_MODEL,
+    CONF_MODELS,
     CONF_PROVIDER,
     CONF_THINKING_LEVEL,
     DEFAULT_SETTINGS,
@@ -194,9 +195,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             api_key = api_keys[provider]
         else:
             api_key = settings.get(CONF_API_KEY, "")
+
+        models = settings.get(CONF_MODELS)
+        if isinstance(models, dict) and provider in models and models[provider]:
+            model = models[provider]
+        else:
+            model = settings.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL])
+
         return AIClient(
             provider=provider,
-            model=settings.get(CONF_MODEL, DEFAULT_SETTINGS[CONF_MODEL]),
+            model=model,
             api_key=api_key,
             base_url=settings.get(CONF_BASE_URL, DEFAULT_SETTINGS[CONF_BASE_URL]),
             thinking_level=settings.get(CONF_THINKING_LEVEL, DEFAULT_SETTINGS[CONF_THINKING_LEVEL]),
